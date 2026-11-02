@@ -19,7 +19,6 @@ import {
   Shirt,
   ShoppingBag,
   Sparkles,
-  Store,
   Truck,
   Users,
   Wallet,
@@ -62,7 +61,6 @@ const navigation: NavigationGroup[] = [
   {
     label: 'Продажи и данные',
     items: [
-      { id: 'avito', label: 'Avito', icon: Store },
       { id: 'telegram', label: 'Telegram', icon: MessageCircle },
       { id: 'pricing', label: 'Ценообразование', icon: CreditCard },
       { id: 'analytics', label: 'Аналитика', icon: Activity },
@@ -84,7 +82,6 @@ const sectionTitles: Record<SectionId, string> = {
   editor: 'Редактор карточек',
   suppliers: 'Поставщики',
   orders: 'Заказы',
-  avito: 'Avito',
   telegram: 'Telegram',
   pricing: 'Ценообразование',
   analytics: 'Аналитика',

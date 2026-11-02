@@ -9,7 +9,6 @@ export type SectionId =
   | 'editor'
   | 'suppliers'
   | 'orders'
-  | 'avito'
   | 'telegram'
   | 'pricing'
   | 'analytics'
@@ -138,7 +137,7 @@ export type IntegrationStatus = {
   state: string
   configured: boolean
   requiredVariables: string[]
-  testProvider: 'telegram' | 'avito' | null
+  testProvider: 'telegram' | null
 }
 
 export type AgentTaskPreview = {

@@ -7,8 +7,7 @@ function isConfigured(...keys: string[]) {
 }
 
 export function getIntegrationStatuses(): IntegrationStatus[] {
-  const telegramConfigured = isConfigured('TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID')
-  const avitoConfigured = isConfigured('AVITO_CLIENT_ID', 'AVITO_CLIENT_SECRET')
+  const telegramConfigured = true
 
   return [
     {
@@ -37,19 +36,11 @@ export function getIntegrationStatuses(): IntegrationStatus[] {
     },
     {
       name: 'Telegram Bot API',
-      detail: telegramConfigured ? 'Модуль getMe/sendMessage готов; проверку связи можно запустить ниже. Интерфейс публикации ещё не подключён.' : 'Модуль getMe/sendMessage готов; добавьте токен и целевой чат для проверки связи.',
-      state: telegramConfigured ? 'Параметры заданы · связь не проверена' : 'Ожидает настройки',
+      detail: 'Токен бота управляется через Vercel Connect. Для публикаций потребуется указать TELEGRAM_CHAT_ID.',
+      state: process.env.TELEGRAM_CHAT_ID?.trim() ? 'Подключён · получатель задан' : 'Подключён · получатель не задан',
       configured: telegramConfigured,
-      requiredVariables: ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'],
+      requiredVariables: ['TELEGRAM_CHAT_ID'],
       testProvider: 'telegram',
-    },
-    {
-      name: 'Avito API',
-      detail: avitoConfigured ? 'OAuth-модуль получает токен и проверяет профиль; публикация требует одобренных методов API и отдельного интерфейса.' : 'OAuth-модуль готов; добавьте Client ID и Client Secret для проверки профиля.',
-      state: avitoConfigured ? 'Параметры заданы · связь не проверена' : 'Ожидает настройки',
-      configured: avitoConfigured,
-      requiredVariables: ['AVITO_CLIENT_ID', 'AVITO_CLIENT_SECRET'],
-      testProvider: 'avito',
     },
     {
       name: 'Источники поиска',
