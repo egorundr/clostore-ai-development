@@ -30,6 +30,8 @@ export type OrderStatus =
   | 'В пути'
   | 'Прибыл'
   | 'Завершён'
+  | 'Отменён'
+  | 'Проблема / возврат'
 
 export type DemoOrder = {
   id: string
@@ -59,4 +61,128 @@ export type DemoProduct = {
 export type NavigationGroup = {
   label: string
   items: NavigationItem[]
+}
+
+export type WorkspaceOrder = {
+  id: string
+  recordId: string
+  customer: string
+  contact: string
+  product: string
+  size: string
+  color: string
+  quantity: number
+  createdAt: string
+  status: OrderStatus
+  paymentStatus: string
+  procurementStatus: string
+  deliveryStatus: string
+  salePrice: number
+  cost: number
+  supplier: string
+  supplierProductUrl: string | null
+  threadUrl: string | null
+  expectedArrivalAt: string | null
+  notes: string
+  tracking?: string
+  history: OrderStatusChange[]
+}
+
+export type OrderStatusChange = {
+  id: string
+  field: string
+  previousValue: string
+  newValue: string
+  note: string
+  createdAt: string
+}
+
+export type FinancialTransaction = {
+  id: string
+  category: string
+  amountRub: number
+  notes: string
+  occurredAt: string
+}
+
+export type WorkspaceProduct = {
+  id: string
+  name: string
+  category: string
+  source: string
+  sourceUrl: string | null
+  supplier: string
+  supplierId: string | null
+  purchaseCny: number
+  purchaseRub: number
+  salePriceRub: number
+  sizes: string[]
+  description: string
+  status: string
+  listingStatus: string
+}
+
+export type WorkspaceSupplier = {
+  id: string
+  name: string
+  platform: string
+  storeUrl: string | null
+  status: string
+  notes: string
+  productCount: number
+}
+
+export type IntegrationStatus = {
+  name: string
+  detail: string
+  state: string
+  configured: boolean
+  requiredVariables: string[]
+  testProvider: 'telegram' | 'avito' | null
+}
+
+export type AgentTaskPreview = {
+  id: string
+  prompt: string
+  response: string
+  status: 'running' | 'completed' | 'failed'
+  model: string
+  inputTokens: number | null
+  outputTokens: number | null
+  createdAt: string
+}
+
+export type SavedProductSearch = {
+  id: string
+  query: string
+  category: string
+  style: string
+  minPriceCny: number | null
+  maxPriceCny: number | null
+  sizes: string[]
+  colorMaterial: string
+  sources: string[]
+  customSourceUrl: string
+  createdAt: string
+}
+
+export type WorkspaceData = {
+  savedSearches: SavedProductSearch[]
+  orders: WorkspaceOrder[]
+  products: WorkspaceProduct[]
+  suppliers: WorkspaceSupplier[]
+  transactions: FinancialTransaction[]
+  revenueTrend: { month: string; revenue: number; grossProfit: number; expenses: number; profit: number }[]
+  summary: {
+    orderCount: number
+    activeOrderCount: number
+    unitCount: number
+    revenue: number
+    cost: number
+    grossProfit: number
+    additionalExpenses: number
+    netProfit: number
+    reviewCount: number
+    publishedCount: number
+  }
 }

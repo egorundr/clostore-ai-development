@@ -7,7 +7,6 @@ import {
   Bot,
   Boxes,
   ChevronDown,
-  CircleHelp,
   Command,
   CreditCard,
   FileEdit,
@@ -39,7 +38,7 @@ import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { DashboardView } from './dashboard-view'
 import { WorkspaceView } from './workspace-views'
-import type { NavigationGroup, SectionId } from './types'
+import type { AgentTaskPreview, IntegrationStatus, NavigationGroup, SectionId, WorkspaceData } from './types'
 
 const navigation: NavigationGroup[] = [
   {
@@ -48,7 +47,7 @@ const navigation: NavigationGroup[] = [
       { id: 'dashboard', label: 'Обзор', icon: LayoutDashboard },
       { id: 'agent', label: 'AI-агент', icon: Bot },
       { id: 'search', label: 'Поиск товаров', icon: Search },
-      { id: 'review', label: 'Очередь проверки', icon: PackageCheck, count: 1 },
+      { id: 'review', label: 'Очередь проверки', icon: PackageCheck },
     ],
   },
   {
@@ -93,7 +92,7 @@ const sectionTitles: Record<SectionId, string> = {
   settings: 'Настройки',
 }
 
-function Sidebar({ active, onNavigate, mobile = false, onClose }: { active: SectionId; onNavigate: (section: SectionId) => void; mobile?: boolean; onClose?: () => void }) {
+function Sidebar({ active, onNavigate, mobile = false, onClose, reviewCount }: { active: SectionId; onNavigate: (section: SectionId) => void; mobile?: boolean; onClose?: () => void; reviewCount: number }) {
   return (
     <aside className={`flex h-full flex-col border-r border-white/[0.07] bg-[#141618] ${mobile ? 'w-[290px]' : 'w-[250px]'}`}>
       <div className="flex h-[72px] items-center justify-between border-b border-white/[0.06] px-5">
@@ -105,7 +104,7 @@ function Sidebar({ active, onNavigate, mobile = false, onClose }: { active: Sect
       </div>
       <div className="px-3 pt-4">
         <div className="flex items-center justify-between rounded-lg border border-white/[0.07] bg-white/[0.025] px-3 py-2.5">
-          <div className="flex items-center gap-2.5"><span className="relative flex size-2"><span className="absolute inline-flex size-full animate-ping rounded-full bg-amber-200/40" /><span className="relative inline-flex size-2 rounded-full bg-amber-200" /></span><span className="text-xs font-medium">Агент не подключён</span></div>
+          <div className="flex items-center gap-2.5"><span className="relative flex size-2"><span className="absolute inline-flex size-full animate-ping rounded-full bg-amber-200/40" /><span className="relative inline-flex size-2 rounded-full bg-amber-200" /></span><span className="text-xs font-medium">DeepSeek подключён</span></div>
           <ChevronDown className="text-muted-foreground" />
         </div>
       </div>
@@ -114,11 +113,11 @@ function Sidebar({ active, onNavigate, mobile = false, onClose }: { active: Sect
           <div key={group.label} className="mb-5 last:mb-0">
             <p className="mb-2 px-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground/70">{group.label}</p>
             <div className="flex flex-col gap-0.5">
-              {group.items.map(({ id, label, icon: Icon, count }) => (
+              {group.items.map(({ id, label, icon: Icon }) => (
                 <button key={id} aria-current={active === id ? 'page' : undefined} onClick={() => { onNavigate(id); onClose?.() }} className={`group flex h-9 items-center gap-3 rounded-md px-2.5 text-left text-[13px] transition-colors ${active === id ? 'bg-white/[0.08] text-foreground' : 'text-muted-foreground hover:bg-white/[0.04] hover:text-foreground'}`}>
                   <Icon className={active === id ? 'text-foreground' : 'text-muted-foreground group-hover:text-foreground'} />
                   <span className="min-w-0 flex-1 truncate">{label}</span>
-                  {count ? <span className="flex size-5 items-center justify-center rounded-full bg-white/[0.08] text-[10px] text-foreground">{count}</span> : null}
+                  {id === 'review' && reviewCount > 0 ? <span className="flex size-5 items-center justify-center rounded-full bg-white/[0.08] text-[10px] text-foreground">{reviewCount}</span> : null}
                 </button>
               ))}
             </div>
@@ -128,21 +127,17 @@ function Sidebar({ active, onNavigate, mobile = false, onClose }: { active: Sect
       <div className="px-3 pb-3">
         <div className="rounded-lg border border-white/[0.07] bg-white/[0.02] p-3">
           <div className="flex items-center gap-2 text-xs font-medium"><Sparkles className="text-muted-foreground" /> Быстрый старт</div>
-          <p className="mt-2 text-[11px] leading-4 text-muted-foreground">Подключите базу и каналы, чтобы сохранять данные.</p>
-          <button onClick={() => { onNavigate('settings'); onClose?.() }} className="mt-2 text-xs text-foreground underline decoration-white/20 underline-offset-4 hover:decoration-white/60">Открыть настройки</button>
+          <p className="mt-2 text-[11px] leading-4 text-muted-foreground">Добавьте товары и заказы, чтобы заполнить сводку.</p>
+          <button onClick={() => { onNavigate('catalog'); onClose?.() }} className="mt-2 text-xs text-foreground underline decoration-white/20 underline-offset-4 hover:decoration-white/60">Открыть каталог</button>
         </div>
       </div>
       <Separator className="bg-white/[0.06]" />
-      <div className="flex items-center gap-3 px-4 py-4">
-        <div className="flex size-8 items-center justify-center rounded-full bg-[#292c30] text-xs font-medium">U</div>
-        <div className="min-w-0 flex-1"><p className="truncate text-xs font-medium">Владелец магазина</p><p className="mt-0.5 truncate text-[10px] text-muted-foreground">Локальный режим</p></div>
-        <Button size="icon-sm" variant="ghost" aria-label="Профиль"><CircleHelp /></Button>
-      </div>
+      <div className="px-4 py-4"><p className="text-xs font-medium">Личное пространство</p><p className="mt-0.5 text-[10px] text-muted-foreground">Доступ без входа</p></div>
     </aside>
   )
 }
 
-export function CloStoreApp() {
+export function CloStoreApp({ initialData, initialAgentTasks, integrations }: { initialData: WorkspaceData; initialAgentTasks: AgentTaskPreview[]; integrations: IntegrationStatus[] }) {
   const [active, setActive] = useState<SectionId>('dashboard')
   const [mobileOpen, setMobileOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
@@ -156,13 +151,13 @@ export function CloStoreApp() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="flex min-h-screen">
-        <div className="sticky top-0 hidden h-screen shrink-0 lg:block"><Sidebar active={active} onNavigate={navigate} /></div>
-        {mobileOpen && <div className="fixed inset-0 z-50 lg:hidden"><button className="absolute inset-0 bg-black/70" aria-label="Закрыть меню" onClick={() => setMobileOpen(false)} /><div className="relative h-full w-fit"><Sidebar active={active} onNavigate={navigate} mobile onClose={() => setMobileOpen(false)} /></div></div>}
+        <div className="sticky top-0 hidden h-screen shrink-0 lg:block"><Sidebar active={active} onNavigate={navigate} reviewCount={initialData.summary.reviewCount} /></div>
+        {mobileOpen && <div className="fixed inset-0 z-50 lg:hidden"><button className="absolute inset-0 bg-black/70" aria-label="Закрыть меню" onClick={() => setMobileOpen(false)} /><div className="relative h-full w-fit"><Sidebar active={active} onNavigate={navigate} mobile onClose={() => setMobileOpen(false)} reviewCount={initialData.summary.reviewCount} /></div></div>}
         <div className="min-w-0 flex-1">
           <header className="sticky top-0 z-30 flex h-[64px] items-center gap-3 border-b border-white/[0.07] bg-background/95 px-4 backdrop-blur sm:px-6 lg:px-8">
             <Button className="lg:hidden" size="icon" variant="ghost" aria-label="Открыть меню" onClick={() => setMobileOpen(true)}><Menu /></Button>
             <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{sectionTitles[active]}</p><p className="hidden text-[10px] text-muted-foreground sm:block">Управление магазином · Europe/Moscow</p></div>
-            <div className="relative hidden w-full max-w-[260px] md:block"><Search className="absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" /><Input aria-label="Поиск по приложению" placeholder="Поиск по приложению" className="h-8 border-white/[0.08] bg-white/[0.025] pl-9 text-xs" onKeyDown={(event) => { if (event.key === 'Enter') navigate('search') }} /></div>
+            <div className="relative hidden w-full max-w-[260px] md:block"><Search className="absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" /><Input aria-label="Поиск по приложению" placeholder="Поиск по приложению" className="h-8 border-white/[0.08] bg-white/[0.025] pl-9 text-xs" onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.keyCode !== 229) navigate('search') }} /></div>
             <Badge variant="outline" className="hidden border-white/[0.08] bg-white/[0.025] text-[10px] text-muted-foreground xl:inline-flex"><span className="mr-1.5 size-1.5 rounded-full bg-emerald-300" />Neon подключён</Badge>
             <div className="relative">
               <Button size="icon" variant="ghost" aria-label="Уведомления" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((value) => !value)}><Bell /></Button>
@@ -171,7 +166,7 @@ export function CloStoreApp() {
             <Button className="hidden sm:inline-flex" variant="outline" size="sm" onClick={() => setQuickActionsOpen(true)}><Command data-icon="inline-start" /> Быстрое действие</Button>
           </header>
           <main className="mx-auto w-full max-w-[1560px] px-4 py-6 sm:px-6 sm:py-7 lg:px-8">
-            {active === 'dashboard' ? <DashboardView onNavigate={navigate} /> : <WorkspaceView section={active} onNavigate={navigate} />}
+            {active === 'dashboard' ? <DashboardView data={initialData} onNavigate={navigate} /> : <WorkspaceView section={active} onNavigate={navigate} data={initialData} agentTasks={initialAgentTasks} integrations={integrations} />}
           </main>
           <footer className="px-4 pb-5 text-center text-[10px] text-muted-foreground/60 sm:px-6">CloStore AI · рабочее пространство · ранняя версия</footer>
         </div>
