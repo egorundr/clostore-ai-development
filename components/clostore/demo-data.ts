@@ -1,0 +1,108 @@
+import type { DemoOrder, DemoProduct } from './types'
+
+export const DEMO_MODE = true
+
+export const demoOrders: DemoOrder[] = [
+  {
+    id: 'CS-2048',
+    customer: 'Александр К.',
+    product: 'Куртка из плотного хлопка',
+    size: 'L',
+    createdAt: 'Сегодня, 12:42',
+    status: 'Ожидает закупки',
+    salePrice: 18900,
+    cost: 11200,
+    supplier: 'North Room · Pinduoduo',
+  },
+  {
+    id: 'CS-2047',
+    customer: 'Мария С.',
+    product: 'Сумка через плечо',
+    size: 'One size',
+    createdAt: 'Сегодня, 10:18',
+    status: 'В пути',
+    salePrice: 12400,
+    cost: 6900,
+    supplier: 'Form Studio · Pinduoduo',
+    tracking: 'CN48290173',
+  },
+  {
+    id: 'CS-2046',
+    customer: 'Илья П.',
+    product: 'Футболка с графичным принтом',
+    size: 'M',
+    createdAt: 'Вчера, 18:06',
+    status: 'Ожидает оплаты',
+    salePrice: 7400,
+    cost: 3900,
+    supplier: 'Archive Lab · Pinduoduo',
+  },
+  {
+    id: 'CS-2045',
+    customer: 'Елена В.',
+    product: 'Широкие брюки из денима',
+    size: 'S',
+    createdAt: 'Вчера, 14:30',
+    status: 'Прибыл',
+    salePrice: 15800,
+    cost: 9200,
+    supplier: 'Form Studio · Pinduoduo',
+    tracking: 'CN48288724',
+  },
+]
+
+export const demoProducts: DemoProduct[] = [
+  {
+    id: 'PR-031',
+    name: 'Куртка из плотного хлопка',
+    category: 'Верхняя одежда',
+    source: 'Pinduoduo',
+    supplier: 'North Room',
+    purchaseCny: 286,
+    sizes: ['M', 'L', 'XL'],
+    status: 'В каталоге',
+    listingStatus: 'Опубликован',
+  },
+  {
+    id: 'PR-030',
+    name: 'Сумка через плечо',
+    category: 'Аксессуары',
+    source: 'Pinduoduo',
+    supplier: 'Form Studio',
+    purchaseCny: 174,
+    sizes: ['One size'],
+    status: 'В каталоге',
+    listingStatus: 'Черновик',
+  },
+  {
+    id: 'PR-029',
+    name: 'Футболка с графичным принтом',
+    category: 'Футболки',
+    source: 'Grailed',
+    supplier: 'Archive Lab',
+    purchaseCny: 98,
+    sizes: ['S', 'M', 'L'],
+    status: 'На рассмотрении',
+    listingStatus: 'Не опубликован',
+  },
+  {
+    id: 'PR-028',
+    name: 'Широкие брюки из денима',
+    category: 'Брюки',
+    source: 'Pinduoduo',
+    supplier: 'Form Studio',
+    purchaseCny: 231,
+    sizes: ['S', 'M', 'L', 'XL'],
+    status: 'В каталоге',
+    listingStatus: 'Опубликован',
+  },
+]
+
+export const demoRevenueTrend = [
+  { month: 'Июн', revenue: 94000, profit: 24800 },
+  { month: 'Июл', revenue: 118000, profit: 32100 },
+  { month: 'Авг', revenue: 103000, profit: 27900 },
+  { month: 'Сен', revenue: 146000, profit: 40600 },
+  { month: 'Окт', revenue: 132000, profit: 36800 },
+  { month: 'Ноя', revenue: 184500, profit: 51200 },
+]
