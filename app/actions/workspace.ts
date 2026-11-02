@@ -5,7 +5,7 @@ import ExcelJS from 'exceljs'
 import { and, desc, eq } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import { db } from '@/lib/db'
-import { orders, products, suppliers } from '@/lib/db/schema'
+import { orders, productSearches, products, suppliers } from '@/lib/db/schema'
 import { getPersonalWorkspaceUserId } from '@/lib/personal-workspace'
 
 function readText(formData: FormData, key: string, maxLength: number, required = false) {
@@ -22,6 +22,71 @@ function readAmount(formData: FormData, key: string, required = false) {
   const value = Number(raw)
   if (!Number.isFinite(value) || value < 0 || value > 100_000_000) throw new Error('Invalid input')
   return Math.round(value * 100) / 100
+}
+
+export async function saveProductSearch(formData: FormData) {
+  const userId = await getPersonalWorkspaceUserId()
+  const query = readText(formData, 'query', 240, true)
+  const category = readText(formData, 'category', 120)
+  const style = readText(formData, 'style', 120)
+  const minRaw = readText(formData, 'minPriceCny', 32)
+  const maxRaw = readText(formData, 'maxPriceCny', 32)
+  const minPriceCny = minRaw ? readAmount(formData, 'minPriceCny', true) : null
+  const maxPriceCny = maxRaw ? readAmount(formData, 'maxPriceCny', true) : null
+  if (minPriceCny !== null && maxPriceCny !== null && minPriceCny > maxPriceCny) throw new Error('Invalid input')
+
+  const sizes = [...new Set(readText(formData, 'sizes', 240).split(',').map((size) => size.trim()).filter(Boolean))].slice(0, 20)
+  const colorMaterial = readText(formData, 'colorMaterial', 180)
+  const allowedSources = new Set(['pinduoduo', 'grailed', 'custom'])
+  const sources = [...new Set(formData.getAll('sources').filter((source): source is string => typeof source === 'string' && allowedSources.has(source)))]
+  if (!sources.length) throw new Error('Invalid input')
+
+  let customSourceUrl = ''
+  if (sources.includes('custom')) {
+    const rawUrl = readText(formData, 'customSourceUrl', 2048, true)
+    try {
+      const url = new URL(rawUrl)
+      if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('Invalid URL')
+      customSourceUrl = url.toString()
+    } catch {
+      throw new Error('Invalid input')
+    }
+  }
+
+  const id = randomUUID()
+  const createdAt = new Date()
+  await db.insert(productSearches).values({
+    id,
+    userId,
+    query,
+    category,
+    style,
+    minPriceCny: minPriceCny === null ? null : String(minPriceCny),
+    maxPriceCny: maxPriceCny === null ? null : String(maxPriceCny),
+    sizes,
+    colorMaterial,
+    sources,
+    customSourceUrl,
+    createdAt,
+  })
+
+  revalidatePath('/')
+  return {
+    ok: true,
+    search: {
+      id,
+      query,
+      category,
+      style,
+      minPriceCny,
+      maxPriceCny,
+      sizes,
+      colorMaterial,
+      sources,
+      customSourceUrl,
+      createdAt: createdAt.toISOString(),
+    },
+  }
 }
 
 type ExportColumn = { header: string; width: number }

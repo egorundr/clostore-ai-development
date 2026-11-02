@@ -46,6 +46,8 @@ import {
   FieldDescription,
   FieldGroup,
   FieldLabel,
+  FieldLegend,
+  FieldSet,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
@@ -55,10 +57,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { runAgentTask } from '@/app/actions/agent'
 import { testAvitoConnection, testTelegramConnection } from '@/app/actions/integrations'
-import { updateProductPricing } from '@/app/actions/workspace'
+import { saveProductSearch, updateProductPricing } from '@/app/actions/workspace'
 import { calculatePricing, formatRub, type PricingInputs } from '@/lib/pricing'
 import { demoOrders, demoProducts } from './demo-data'
-import type { AgentTaskPreview, DemoProduct, IntegrationStatus, SectionId, WorkspaceData } from './types'
+import type { AgentTaskPreview, DemoProduct, IntegrationStatus, SavedProductSearch, SectionId, WorkspaceData } from './types'
 import { LiveAnalyticsView, LiveCatalogView, LiveEditorView, LiveOrdersView, LiveReviewView, LiveSuppliersView } from './live-workspace-views'
 
 type WorkspaceViewsProps = {
@@ -132,7 +134,7 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
               {activeTask ? <>
                 <div className="ml-auto max-w-xl rounded-xl border border-white/[0.08] bg-white/[0.045] p-4"><p className="text-xs text-muted-foreground">Ваша задача</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6">{activeTask.prompt}</p></div>
                 <div className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4"><p className="mb-2 text-xs text-muted-foreground">Ответ агента</p>{activeTask.status === 'completed' ? <p className="whitespace-pre-wrap text-sm leading-6">{activeTask.response}</p> : <p className="text-sm text-muted-foreground">{activeTask.status === 'running' ? 'Задача выполняется…' : 'Запрос завершился ошибкой. Отправьте его повторно.'}</p>}<p className="mt-3 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Moscow' }).format(new Date(activeTask.createdAt))}{activeTask.inputTokens != null && activeTask.outputTokens != null ? ` · ${activeTask.inputTokens + activeTask.outputTokens} токенов` : ''}</p></div>
-              </> : <div className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4"><p className="text-sm leading-6">Опишите цель обычным языком. Сейчас агент отвечает только текстом и не имеет доступа к интернет-поиску, товарам, заказам или каналам продаж.</p><p className="mt-3 text-xs text-muted-foreground">Закупка, публикация и изменение финансовых данных не выполняются.</p></div>}
+              </> : <div className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4"><p className="text-sm leading-6">Опишите цель обычным языком. Сейчас агент отвечает только текстом и не имеет доступа к интернет-поиску, товарам, зак��зам или каналам продаж.</p><p className="mt-3 text-xs text-muted-foreground">Закупка, публикация и изменение финансовых данных не выполняются.</p></div>}
               {pending && <div role="status" className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4 text-sm text-muted-foreground">DeepSeek готовит ответ…</div>}
               {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
             </div>
@@ -156,34 +158,98 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
 }
 
 
-function SearchView() {
+function getMarketplaceSearchUrl(search: SavedProductSearch, source: string) {
+  const keywords = [search.query, search.category, search.style, search.colorMaterial, ...search.sizes].filter(Boolean).join(' ')
+  if (source === 'pinduoduo') {
+    const url = new URL('https://mobile.yangkeduo.com/search_result.html')
+    url.searchParams.set('search_key', keywords)
+    return url.toString()
+  }
+  if (source === 'grailed') {
+    const url = new URL('https://www.grailed.com/shop')
+    url.searchParams.set('query', keywords)
+    return url.toString()
+  }
+  if (source === 'custom' && search.customSourceUrl) {
+    const url = new URL(search.customSourceUrl)
+    url.searchParams.set('query', keywords)
+    return url.toString()
+  }
+  return null
+}
+
+const marketplaceLabels: Record<string, string> = {
+  pinduoduo: 'Pinduoduo',
+  grailed: 'Grailed',
+  custom: 'Свой источник',
+}
+
+function SearchView({ data, onNavigate }: { data: WorkspaceData; onNavigate: (section: SectionId) => void }) {
   const [notice, setNotice] = useState('')
+  const [isPending, startTransition] = useTransition()
+  const [history, setHistory] = useState(data.savedSearches)
+  const [activeSearch, setActiveSearch] = useState<SavedProductSearch | null>(data.savedSearches[0] ?? null)
+
   function requestSearch(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setNotice('Поиск не запущен: внешние источники и адаптеры ещё не подключены.')
+    const formData = new FormData(event.currentTarget)
+    startTransition(async () => {
+      try {
+        const result = await saveProductSearch(formData)
+        setHistory((current) => [result.search, ...current.filter((search) => search.id !== result.search.id)].slice(0, 20))
+        setActiveSearch(result.search)
+        setNotice('Запрос сохранён. Откройте выбранную площадку для ручного просмотра; автоматический сбор не выполняется.')
+      } catch {
+        setNotice('Не удалось сохранить запрос. Проверьте обязательные поля, диапазон цены и URL своего источника.')
+      }
+    })
   }
 
   return (
     <div className="space-y-5">
-      <SectionHeading title="Поиск товаров" description="Соберите критерии и источники для будущего поиска." action={<Button variant="outline"><Settings2 data-icon="inline-start" /> Источники</Button>} />
-      <DemoNotice>Источники показаны для настройки. Автоматический сбор данных не выполняется.</DemoNotice>
+      <SectionHeading title="Поиск товаров" description="Сохраните критерии и откройте поиск на выбранных площадках." action={<Button variant="outline" onClick={() => onNavigate('settings')}><Settings2 data-icon="inline-start" /> Источники</Button>} />
+      <div className="rounded-lg border border-sky-400/15 bg-sky-400/[0.04] p-3 text-xs leading-5 text-sky-100/75">Запросы сохраняются в вашем рабочем пространстве. Результаты открываются на официальных сайтах для ручного просмотра — автоматический сбор и импорт не выполняются.</div>
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Параметры поиска</CardTitle><p className="text-xs text-muted-foreground">Точные условия помогут сократить лишние результаты</p></CardHeader>
           <CardContent><form onSubmit={requestSearch} className="space-y-5">
             <FieldGroup className="grid gap-4 md:grid-cols-2">
-              <Field className="md:col-span-2"><FieldLabel htmlFor="search-query">Что ищем</FieldLabel><Input id="search-query" placeholder="Например, мужская куртка в стиле archive" /></Field>
-              <Field><FieldLabel htmlFor="search-category">Категория</FieldLabel><Input id="search-category" placeholder="Верхняя одежда" /></Field>
-              <Field><FieldLabel htmlFor="search-style">Стиль</FieldLabel><Input id="search-style" placeholder="Avant-garde, archive…" /></Field>
-              <Field><FieldLabel htmlFor="search-min">Цена от, CNY</FieldLabel><Input id="search-min" type="number" min="0" placeholder="80" /></Field>
-              <Field><FieldLabel htmlFor="search-max">Цена до, CNY</FieldLabel><Input id="search-max" type="number" min="0" placeholder="250" /></Field>
-              <Field><FieldLabel htmlFor="search-sizes">Размеры</FieldLabel><Input id="search-sizes" placeholder="S, M, L" /></Field>
-              <Field><FieldLabel htmlFor="search-color">Цвет и материал</FieldLabel><Input id="search-color" placeholder="Чёрный, хлопок" /></Field>
+              <Field className="md:col-span-2"><FieldLabel htmlFor="search-query">Что ищем</FieldLabel><Input id="search-query" name="query" required maxLength={240} placeholder="Например, мужская куртка в стиле archive" /></Field>
+              <Field><FieldLabel htmlFor="search-category">Категория</FieldLabel><Input id="search-category" name="category" maxLength={120} placeholder="Верхняя одежда" /></Field>
+              <Field><FieldLabel htmlFor="search-style">Стиль</FieldLabel><Input id="search-style" name="style" maxLength={120} placeholder="Avant-garde, archive…" /></Field>
+              <Field><FieldLabel htmlFor="search-min">Цена от, CNY</FieldLabel><Input id="search-min" name="minPriceCny" type="number" min="0" step="0.01" placeholder="80" /></Field>
+              <Field><FieldLabel htmlFor="search-max">Цена до, CNY</FieldLabel><Input id="search-max" name="maxPriceCny" type="number" min="0" step="0.01" placeholder="250" /></Field>
+              <Field><FieldLabel htmlFor="search-sizes">Размеры</FieldLabel><Input id="search-sizes" name="sizes" maxLength={240} placeholder="S, M, L" /></Field>
+              <Field><FieldLabel htmlFor="search-color">Цвет и материал</FieldLabel><Input id="search-color" name="colorMaterial" maxLength={180} placeholder="Чёрный, хлопок" /></Field>
+              <Field className="md:col-span-2"><FieldLabel htmlFor="search-custom-url">URL своего источника</FieldLabel><Input id="search-custom-url" name="customSourceUrl" type="url" maxLength={2048} placeholder="https://example.com/search" /></Field>
             </FieldGroup>
-            <div className="flex flex-wrap gap-2"><Badge variant="outline" className="border-white/10">Pinduoduo · не подключён</Badge><Badge variant="outline" className="border-white/10">Grailed · не подключён</Badge><Badge variant="outline" className="border-white/10">Свой источник</Badge></div>
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.06] pt-4"><span className="text-xs text-muted-foreground">Запросы будут доступны после настройки адаптеров</span><Button type="submit"><Search data-icon="inline-start" /> Подготовить поиск</Button></div>
-          </form>{notice && <p role="status" className="mt-4 rounded-lg border border-amber-400/15 bg-amber-400/[0.05] p-3 text-xs text-amber-100/80">{notice}</p>}</CardContent>
+            <FieldSet className="gap-2">
+              <FieldLegend variant="label">Где искать</FieldLegend>
+              <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm">
+                <label className="flex items-center gap-2"><input type="checkbox" name="sources" value="pinduoduo" defaultChecked className="accent-primary" /> Pinduoduo</label>
+                <label className="flex items-center gap-2"><input type="checkbox" name="sources" value="grailed" defaultChecked className="accent-primary" /> Grailed</label>
+                <label className="flex items-center gap-2"><input type="checkbox" name="sources" value="custom" className="accent-primary" /> Свой источник</label>
+              </div>
+            </FieldSet>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.06] pt-4"><span className="text-xs text-muted-foreground">Критерии сохраняются отдельно для каждого аккаунта</span><Button type="submit" disabled={isPending}><Search data-icon="inline-start" /> {isPending ? 'Сохраняем…' : 'Сохранить запрос'}</Button></div>
+          </form>{notice && <p role="status" className="mt-4 rounded-lg border border-white/10 bg-white/[0.03] p-3 text-xs text-muted-foreground">{notice}</p>}</CardContent>
         </Card>
-        <div className="space-y-4"><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Источники</CardTitle><p className="text-xs text-muted-foreground">Менеджер источников</p></CardHeader><CardContent className="space-y-3">{[{ name: 'Pinduoduo', desc: 'API / ручная проверка' }, { name: 'Grailed', desc: 'Ресайкл-площадка' }, { name: 'Свой источник', desc: 'Добавить URL' }].map((source) => <div key={source.name} className="flex items-center gap-3"><span className="flex size-8 items-center justify-center rounded-md bg-white/[0.04]"><Link2 /></span><span className="min-w-0 flex-1"><span className="block text-sm">{source.name}</span><span className="text-xs text-muted-foreground">{source.desc}</span></span><span className="size-1.5 rounded-full bg-white/20" /></div>)}</CardContent></Card><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Безопасный сбор</CardTitle></CardHeader><CardContent className="text-xs leading-5 text-muted-foreground">Перед подключением источника нужно проверить доступ к данным, условия площадки, авторизацию и ограничения автоматизированного сбора.</CardContent></Card></div>
+        <div className="space-y-4">
+          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Открыть площадку</CardTitle><p className="text-xs text-muted-foreground">{activeSearch ? `Запрос: ${activeSearch.query}` : 'Сначала сохраните запрос'}</p></CardHeader><CardContent className="space-y-3">
+            {activeSearch ? <>
+              <p className="text-xs leading-5 text-muted-foreground">{[activeSearch.category, activeSearch.style, activeSearch.sizes.length ? `Размеры: ${activeSearch.sizes.join(', ')}` : '', activeSearch.minPriceCny !== null || activeSearch.maxPriceCny !== null ? `Цена: ${activeSearch.minPriceCny ?? '—'}–${activeSearch.maxPriceCny ?? '—'} CNY` : ''].filter(Boolean).join(' · ') || 'Дополнительные фильтры не заданы.'}</p>
+              {activeSearch.sources.map((source) => {
+                const href = getMarketplaceSearchUrl(activeSearch, source)
+                if (!href) return null
+                return <a key={source} href={href} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between rounded-lg border border-white/[0.07] px-3 py-2.5 text-sm transition-colors hover:bg-white/[0.04]">{marketplaceLabels[source] ?? source}<ExternalLink className="size-4 text-muted-foreground" /></a>
+              })}
+              <p className="text-xs leading-5 text-muted-foreground">Ценовые и другие дополнительные фильтры сохранены в запросе, но при необходимости задаются вручную на площадке.</p>
+            </> : <p className="text-sm text-muted-foreground">Сохранённые запросы появятся здесь.</p>}
+          </CardContent></Card>
+          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>История запросов</CardTitle><p className="text-xs text-muted-foreground">Последние 20 запросов этого аккаунта</p></CardHeader><CardContent className="space-y-2">
+            {history.length ? history.map((search) => <button key={search.id} type="button" onClick={() => setActiveSearch(search)} className="flex w-full items-start justify-between gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-white/[0.04]"><span className="min-w-0"><span className="block truncate text-sm">{search.query}</span><span className="mt-1 block text-xs text-muted-foreground">{new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(search.createdAt))}</span></span><Clock3 className="mt-0.5 size-4 shrink-0 text-muted-foreground" /></button>) : <p className="text-sm text-muted-foreground">Пока нет сохранённых запросов.</p>}
+          </CardContent></Card>
+          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Безопасный сбор</CardTitle></CardHeader><CardContent className="text-xs leading-5 text-muted-foreground">Площадки открываются отдельно. Проверяйте правила площадки и используйте только разрешённые способы доступа; автоматизированный сбор в приложении отключён.</CardContent></Card>
+        </div>
       </div>
     </div>
   )
@@ -289,7 +355,7 @@ function PricingView({ data }: { data: WorkspaceData }) {
   const fields: { key: keyof PricingInputs; label: string; step?: string }[] = [
     { key: 'purchasePriceCny', label: 'Закупочная цена, CNY', step: '0.01' },
     { key: 'cnyToRub', label: 'Курс CNY / RUB', step: '0.01' },
-    { key: 'brokerFeePercent', label: 'Комиссия посредника, %', step: '0.1' },
+    { key: 'brokerFeePercent', label: 'Коми��сия посредника, %', step: '0.1' },
     { key: 'chinaShippingRub', label: 'Доставка по Китаю, ₽', step: '0.01' },
     { key: 'internationalShippingRub', label: 'Международная доставка, ₽', step: '0.01' },
     { key: 'extraCostsRub', label: 'Дополнительные расходы, ₽', step: '0.01' },
@@ -338,7 +404,7 @@ function SettingsView({ integrations }: { integrations: IntegrationStatus[] }) {
     })
   }
 
-  return <div className="space-y-5"><SectionHeading title="Настройки" description="Провайдеры, каналы продаж и правила работы приложения." /><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Подключения</CardTitle><p className="text-xs text-muted-foreground">Секреты не отображаются в интерфейсе. Добавляйте переменные в Vars проекта; статусы показывают только наличие конфигурации, не успешность API-проверки.</p></CardHeader><CardContent className="divide-y divide-white/[0.06]">{integrations.map((item) => <div key={item.name} className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center"><span className={`size-2 shrink-0 rounded-full ${item.configured ? 'bg-emerald-300' : 'bg-white/20'}`} /><div className="min-w-0 flex-1"><p className="text-sm font-medium">{item.name}</p><p className="mt-1 text-xs text-muted-foreground">{item.detail}</p>{item.requiredVariables.length > 0 && <p className="mt-1 break-words font-mono text-[10px] text-muted-foreground/80">Переменные: {item.requiredVariables.join(', ')}</p>}</div><div className="flex flex-wrap items-center gap-2"><Badge variant="outline" className={item.configured ? 'w-fit border-emerald-300/20 text-emerald-100' : 'w-fit border-white/10 text-muted-foreground'}>{item.state}</Badge>{item.testProvider && <Button type="button" size="sm" variant="outline" disabled={!item.configured || pending} onClick={() => testConnection(item.testProvider!)}>{pending ? <LoaderCircle data-icon="inline-start" className="animate-spin" /> : null}Проверить</Button>}</div>{item.testProvider && testResults[item.testProvider] && <p role="status" className="mt-2 text-xs text-muted-foreground">{testResults[item.testProvider]}</p>}</div>)}</CardContent></Card><div className="grid gap-4 xl:grid-cols-2"><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Ценообразование</CardTitle></CardHeader><CardContent className="space-y-3"><ResultRow label="Основная валюта" value="RUB" /><ResultRow label="Дополнительная валюта" value="CNY" /><ResultRow label="Часовой пояс" value="Europe/Moscow" /><Button variant="outline" size="sm">Изменить параметры</Button></CardContent></Card><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Безопасность</CardTitle></CardHeader><CardContent className="space-y-3 text-xs leading-5 text-muted-foreground"><p>Вход и регистрация в приложении отключены. Данные доступны на странице без проверки пользователя.</p><p>Перед публикацией ограничьте доступ к деплою средствами Vercel: публичный адрес сам по себе не защищает данные.</p></CardContent></Card></div></div>
+  return <div className="space-y-5"><SectionHeading title="Настройки" description="Провайдеры, каналы продаж и правила работы приложения." /><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Подключения</CardTitle><p className="text-xs text-muted-foreground">Секреты не отображаются в интерфейсе. Добавляйте переменные в Vars проекта; статусы показывают только наличие конфигурации, не успешность API-проверки.</p></CardHeader><CardContent className="divide-y divide-white/[0.06]">{integrations.map((item) => <div key={item.name} className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center"><span className={`size-2 shrink-0 rounded-full ${item.configured ? 'bg-emerald-300' : 'bg-white/20'}`} /><div className="min-w-0 flex-1"><p className="text-sm font-medium">{item.name}</p><p className="mt-1 text-xs text-muted-foreground">{item.detail}</p>{item.requiredVariables.length > 0 && <p className="mt-1 break-words font-mono text-[10px] text-muted-foreground/80">Переменные: {item.requiredVariables.join(', ')}</p>}</div><div className="flex flex-wrap items-center gap-2"><Badge variant="outline" className={item.configured ? 'w-fit border-emerald-300/20 text-emerald-100' : 'w-fit border-white/10 text-muted-foreground'}>{item.state}</Badge>{item.testProvider && <Button type="button" size="sm" variant="outline" disabled={!item.configured || pending} onClick={() => testConnection(item.testProvider!)}>{pending ? <LoaderCircle data-icon="inline-start" className="animate-spin" /> : null}Проверить</Button>}</div>{item.testProvider && testResults[item.testProvider] && <p role="status" className="mt-2 text-xs text-muted-foreground">{testResults[item.testProvider]}</p>}</div>)}</CardContent></Card><div className="grid gap-4 xl:grid-cols-2"><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Ценообразование</CardTitle></CardHeader><CardContent className="space-y-3"><ResultRow label="Основная валюта" value="RUB" /><ResultRow label="Дополнительная валюта" value="CNY" /><ResultRow label="Часовой пояс" value="Europe/Moscow" /><Button variant="outline" size="sm">Изменить параметры</Button></CardContent></Card><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Безопасность</CardTitle></CardHeader><CardContent className="space-y-3 text-xs leading-5 text-muted-foreground"><p>Вход и регистрация в приложении отключены. Данные доступны на странице без проверки пользователя.</p><p>Перед публикацией ограничьте д��ступ к деплою средствами Vercel: публичный адрес сам по себе не защищает данные.</p></CardContent></Card></div></div>
 }
 
 function PlaceholderView({ section, onNavigate }: Pick<WorkspaceViewsProps, 'section' | 'onNavigate'>) {
@@ -357,7 +423,7 @@ export function WorkspaceView({ section, onNavigate, data, agentTasks, integrati
     case 'suppliers': return <LiveSuppliersView data={data} />
     case 'analytics': return <LiveAnalyticsView data={data} onNavigate={onNavigate} />
     case 'agent': return <AgentView initialTasks={agentTasks} />
-    case 'search': return <SearchView />
+    case 'search': return <SearchView data={data} onNavigate={onNavigate} />
     case 'pricing': return <PricingView data={data} />
     case 'avito': return <PublicationView channel="Avito" />
     case 'telegram': return <PublicationView channel="Telegram" />

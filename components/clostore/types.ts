@@ -123,7 +123,22 @@ export type AgentTaskPreview = {
   createdAt: string
 }
 
+export type SavedProductSearch = {
+  id: string
+  query: string
+  category: string
+  style: string
+  minPriceCny: number | null
+  maxPriceCny: number | null
+  sizes: string[]
+  colorMaterial: string
+  sources: string[]
+  customSourceUrl: string
+  createdAt: string
+}
+
 export type WorkspaceData = {
+  savedSearches: SavedProductSearch[]
   orders: WorkspaceOrder[]
   products: WorkspaceProduct[]
   suppliers: WorkspaceSupplier[]

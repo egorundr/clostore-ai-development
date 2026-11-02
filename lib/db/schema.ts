@@ -77,6 +77,21 @@ export const products = pgTable('products', {
   updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 }, (table) => [index('products_user_created_idx').on(table.userId, table.createdAt)])
 
+export const productSearches = pgTable('product_searches', {
+  id: text('id').primaryKey(),
+  userId: text('userId').notNull(),
+  query: text('query').notNull(),
+  category: text('category').notNull().default(''),
+  style: text('style').notNull().default(''),
+  minPriceCny: numeric('minPriceCny', { precision: 12, scale: 2 }),
+  maxPriceCny: numeric('maxPriceCny', { precision: 12, scale: 2 }),
+  sizes: jsonb('sizes').$type<string[]>().notNull().default([]),
+  colorMaterial: text('colorMaterial').notNull().default(''),
+  sources: jsonb('sources').$type<string[]>().notNull().default([]),
+  customSourceUrl: text('customSourceUrl').notNull().default(''),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+}, (table) => [index('product_searches_user_created_idx').on(table.userId, table.createdAt)])
+
 export const agentTasks = pgTable('agent_tasks', {
   id: text('id').primaryKey(),
   userId: text('userId').notNull(),

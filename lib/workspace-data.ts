@@ -2,7 +2,7 @@ import 'server-only'
 
 import { and, count, desc, eq, gte, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { orders, products, suppliers } from '@/lib/db/schema'
+import { orders, productSearches, products, suppliers } from '@/lib/db/schema'
 import type { OrderStatus, WorkspaceData } from '@/components/clostore/types'
 
 const orderStatuses: OrderStatus[] = [
@@ -32,10 +32,11 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
   since.setUTCMonth(since.getUTCMonth() - 5, 1)
   since.setUTCHours(0, 0, 0, 0)
 
-  const [orderRows, productRows, supplierRows, orderTotals, reviewTotals, publishedTotals, trendRows] = await Promise.all([
+  const [orderRows, productRows, supplierRows, searchRows, orderTotals, reviewTotals, publishedTotals, trendRows] = await Promise.all([
     db.select().from(orders).where(eq(orders.userId, userId)).orderBy(desc(orders.createdAt)).limit(100),
     db.select().from(products).where(eq(products.userId, userId)).orderBy(desc(products.createdAt)).limit(200),
     db.select().from(suppliers).where(eq(suppliers.userId, userId)).orderBy(suppliers.name).limit(200),
+    db.select().from(productSearches).where(eq(productSearches.userId, userId)).orderBy(desc(productSearches.createdAt)).limit(20),
     db.select({
       total: count(),
       active: sql<number>`count(*) filter (where ${orders.status} <> 'Завершён')`,
@@ -96,6 +97,19 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
   const totals = orderTotals[0]
 
   return {
+    savedSearches: searchRows.map((search) => ({
+      id: search.id,
+      query: search.query,
+      category: search.category,
+      style: search.style,
+      minPriceCny: search.minPriceCny === null ? null : amount(search.minPriceCny),
+      maxPriceCny: search.maxPriceCny === null ? null : amount(search.maxPriceCny),
+      sizes: Array.isArray(search.sizes) ? search.sizes : [],
+      colorMaterial: search.colorMaterial,
+      sources: Array.isArray(search.sources) ? search.sources : [],
+      customSourceUrl: search.customSourceUrl,
+      createdAt: search.createdAt.toISOString(),
+    })),
     orders: orderRows.map((order) => ({
       id: `CS-${order.id.slice(0, 8).toUpperCase()}`,
       recordId: order.id,
