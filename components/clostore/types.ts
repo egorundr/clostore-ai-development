@@ -88,6 +88,7 @@ export type WorkspaceProduct = {
   purchaseRub: number
   salePriceRub: number
   sizes: string[]
+  description: string
   status: string
   listingStatus: string
 }
@@ -96,8 +97,29 @@ export type WorkspaceSupplier = {
   id: string
   name: string
   platform: string
+  storeUrl: string | null
   status: string
+  notes: string
   productCount: number
+}
+
+export type IntegrationStatus = {
+  name: string
+  detail: string
+  state: string
+  configured: boolean
+  requiredVariables: string[]
+}
+
+export type AgentTaskPreview = {
+  id: string
+  prompt: string
+  response: string
+  status: 'running' | 'completed' | 'failed'
+  model: string
+  inputTokens: number | null
+  outputTokens: number | null
+  createdAt: string
 }
 
 export type WorkspaceData = {

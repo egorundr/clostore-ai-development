@@ -38,7 +38,7 @@ import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { DashboardView } from './dashboard-view'
 import { WorkspaceView } from './workspace-views'
-import type { NavigationGroup, SectionId, WorkspaceData } from './types'
+import type { AgentTaskPreview, IntegrationStatus, NavigationGroup, SectionId, WorkspaceData } from './types'
 
 const navigation: NavigationGroup[] = [
   {
@@ -132,12 +132,12 @@ function Sidebar({ active, onNavigate, mobile = false, onClose, reviewCount }: {
         </div>
       </div>
       <Separator className="bg-white/[0.06]" />
-      <div className="px-4 py-4"><p className="text-xs font-medium">Личное пространство</p><p className="mt-0.5 text-[10px] text-muted-foreground">Только для вас</p></div>
+      <div className="px-4 py-4"><p className="text-xs font-medium">Личное пространство</p><p className="mt-0.5 text-[10px] text-muted-foreground">Доступ без входа</p></div>
     </aside>
   )
 }
 
-export function CloStoreApp({ initialData }: { initialData: WorkspaceData }) {
+export function CloStoreApp({ initialData, initialAgentTasks, integrations }: { initialData: WorkspaceData; initialAgentTasks: AgentTaskPreview[]; integrations: IntegrationStatus[] }) {
   const [active, setActive] = useState<SectionId>('dashboard')
   const [mobileOpen, setMobileOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
@@ -166,7 +166,7 @@ export function CloStoreApp({ initialData }: { initialData: WorkspaceData }) {
             <Button className="hidden sm:inline-flex" variant="outline" size="sm" onClick={() => setQuickActionsOpen(true)}><Command data-icon="inline-start" /> Быстрое действие</Button>
           </header>
           <main className="mx-auto w-full max-w-[1560px] px-4 py-6 sm:px-6 sm:py-7 lg:px-8">
-            {active === 'dashboard' ? <DashboardView data={initialData} onNavigate={navigate} /> : <WorkspaceView section={active} onNavigate={navigate} data={initialData} />}
+            {active === 'dashboard' ? <DashboardView data={initialData} onNavigate={navigate} /> : <WorkspaceView section={active} onNavigate={navigate} data={initialData} agentTasks={initialAgentTasks} integrations={integrations} />}
           </main>
           <footer className="px-4 pb-5 text-center text-[10px] text-muted-foreground/60 sm:px-6">CloStore AI · рабочее пространство · ранняя версия</footer>
         </div>

@@ -11,10 +11,12 @@
   "dependencies": {
     "@base-ui/react": "^1.5.0",
     "@vercel/analytics": "1.6.1",
+    "ai": "^7.0.159",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cn": "^0.5.1",
     "drizzle-orm": "^0.45.4",
+    "exceljs": "^4.4.0",
     "lucide-react": "^1.16.0",
     "next": "16.4.3",
     "pg": "^8.23.1",

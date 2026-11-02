@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useTransition } from 'react'
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -53,15 +53,19 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Separator } from '@/components/ui/separator'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
+import { runAgentTask } from '@/app/actions/agent'
+import { updateProductPricing } from '@/app/actions/workspace'
 import { calculatePricing, formatRub, type PricingInputs } from '@/lib/pricing'
 import { demoOrders, demoProducts } from './demo-data'
-import type { DemoProduct, SectionId, WorkspaceData } from './types'
-import { LiveAnalyticsView, LiveCatalogView, LiveOrdersView, LiveReviewView, LiveSuppliersView } from './live-workspace-views'
+import type { AgentTaskPreview, DemoProduct, IntegrationStatus, SectionId, WorkspaceData } from './types'
+import { LiveAnalyticsView, LiveCatalogView, LiveEditorView, LiveOrdersView, LiveReviewView, LiveSuppliersView } from './live-workspace-views'
 
 type WorkspaceViewsProps = {
   section: SectionId
   onNavigate: (section: SectionId) => void
   data: WorkspaceData
+  agentTasks: AgentTaskPreview[]
+  integrations: IntegrationStatus[]
 }
 
 function SectionHeading({ title, description, action }: { title: string; description: string; action?: React.ReactNode }) {
@@ -84,19 +88,72 @@ function statusTone(status: string) {
   return 'border-white/10 text-muted-foreground'
 }
 
-function AgentView() {
+function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
   const [task, setTask] = useState('')
-  const [draft, setDraft] = useState('')
-  const [notice, setNotice] = useState('')
-  const suggestions = ['Найти аналоги на Pinduoduo', 'Проверить поставщика', 'Рассчитать цену продажи']
+  const [tasks, setTasks] = useState(initialTasks)
+  const [selectedTaskId, setSelectedTaskId] = useState(initialTasks[0]?.id ?? '')
+  const [error, setError] = useState('')
+  const [pending, startTransition] = useTransition()
+  const suggestions = ['Составь план поиска аналогов на Pinduoduo', 'Подготовь список вопросов поставщику', 'Объясни формулу расчёта цены продажи']
+  const activeTask = tasks.find((item) => item.id === selectedTaskId) ?? tasks[0]
 
-  function prepareDraft(event: React.FormEvent<HTMLFormElement>) {
+  function submitTask(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!task.trim()) return
-    setDraft(task.trim())
-    setNotice('Задача сохранена как локальный черновик. AI-провайдер не подключён, запрос не отправлялся.')
-    setTask('')
+    const prompt = task.trim()
+    if (!prompt || pending) return
+    setError('')
+    startTransition(async () => {
+      try {
+        const result = await runAgentTask(prompt)
+        if (!result.ok) {
+          setError(result.reason === 'invalid_input' ? 'Введите задачу длиной до 4 000 символов.' : 'DeepSeek временно недоступен. История попытки сохранена; попробуйте ещё раз позже.')
+          return
+        }
+        setTasks((current) => [result.task, ...current.filter((item) => item.id !== result.task.id)].slice(0, 20))
+        setSelectedTaskId(result.task.id)
+        setTask('')
+      } catch {
+        setError('Не удалось выполнить запрос. Проверьте соединение и повторите попытку.')
+      }
+    })
   }
+
+  return (
+    <div className="space-y-5">
+      <SectionHeading title="AI-агент" description="Текстовый помощник на DeepSeek. Инструменты подключаются отдельно и не запускаются без подтверждения." action={<Badge variant="outline" className="w-fit border-emerald-300/20 text-emerald-100"><span className="mr-2 size-1.5 rounded-full bg-emerald-300" />DeepSeek через AI Gateway</Badge>} />
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
+        <Card className="flex min-h-[480px] flex-col border-white/[0.07] bg-card/80 shadow-none">
+          <CardHeader className="flex flex-row items-center gap-3 border-b border-white/[0.06]">
+            <span className="flex size-9 items-center justify-center rounded-lg bg-white/[0.05] text-muted-foreground"><Sparkles /></span><div><CardTitle>Рабочий диалог</CardTitle><p className="mt-1 text-xs text-muted-foreground">deepseek/deepseek-v4.1-flash · история сохраняется в Neon</p></div>
+          </CardHeader>
+          <CardContent className="flex flex-1 flex-col justify-between gap-6 p-5">
+            <div className="max-h-[420px] space-y-4 overflow-y-auto pr-1">
+              {activeTask ? <>
+                <div className="ml-auto max-w-xl rounded-xl border border-white/[0.08] bg-white/[0.045] p-4"><p className="text-xs text-muted-foreground">Ваша задача</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6">{activeTask.prompt}</p></div>
+                <div className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4"><p className="mb-2 text-xs text-muted-foreground">Ответ агента</p>{activeTask.status === 'completed' ? <p className="whitespace-pre-wrap text-sm leading-6">{activeTask.response}</p> : <p className="text-sm text-muted-foreground">{activeTask.status === 'running' ? 'Задача выполняется…' : 'Запрос завершился ошибкой. Отправьте его повторно.'}</p>}<p className="mt-3 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Moscow' }).format(new Date(activeTask.createdAt))}{activeTask.inputTokens != null && activeTask.outputTokens != null ? ` · ${activeTask.inputTokens + activeTask.outputTokens} токенов` : ''}</p></div>
+              </> : <div className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4"><p className="text-sm leading-6">Опишите цель обычным языком. Сейчас агент отвечает только текстом и не имеет доступа к интернет-поиску, товарам, заказам или каналам продаж.</p><p className="mt-3 text-xs text-muted-foreground">Закупка, публикация и изменение финансовых данных не выполняются.</p></div>}
+              {pending && <div role="status" className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4 text-sm text-muted-foreground">DeepSeek готовит ответ…</div>}
+              {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+            </div>
+            <form onSubmit={submitTask} className="space-y-3">
+              <div className="flex flex-wrap gap-2">{suggestions.map((item) => <Button key={item} type="button" variant="outline" size="sm" disabled={pending} onClick={() => setTask(item)}>{item}</Button>)}</div>
+              <Field>
+                <FieldLabel htmlFor="agent-task" className="sr-only">Текст задачи</FieldLabel>
+                <Textarea id="agent-task" maxLength={4000} value={task} onChange={(event) => setTask(event.target.value)} placeholder="Опишите задачу для текстового помощника…" className="min-h-24 resize-y border-white/10 bg-black/10" />
+              </Field>
+              <div className="flex items-center justify-between gap-3"><span className="text-xs text-muted-foreground">До 4 000 символов · без автоматических действий</span><Button type="submit" disabled={!task.trim() || pending}>{pending ? <><LoaderCircle data-icon="inline-start" className="animate-spin" /> Отправка…</> : <><Send data-icon="inline-start" /> Спросить DeepSeek</>}</Button></div>
+            </form>
+          </CardContent>
+        </Card>
+        <aside className="space-y-4">
+          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Последние задания</CardTitle><p className="text-xs text-muted-foreground">Сохранённая история · до 20 задач</p></CardHeader><CardContent className="space-y-2">{tasks.length ? tasks.slice(0, 8).map((item) => <button key={item.id} type="button" onClick={() => setSelectedTaskId(item.id)} className={`w-full rounded-lg border p-3 text-left transition-colors ${selectedTaskId === item.id ? 'border-white/15 bg-white/[0.05]' : 'border-white/[0.06] hover:bg-white/[0.03]'}`}><span className="block truncate text-xs font-medium">{item.prompt}</span><span className="mt-1 block text-[10px] text-muted-foreground">{item.status === 'completed' ? 'Готово' : item.status === 'running' ? 'Выполняется' : 'Ошибка'} · {new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeZone: 'Europe/Moscow' }).format(new Date(item.createdAt))}</span></button>) : <div className="rounded-lg border border-dashed border-white/10 p-4 text-center"><MessageSquareText className="mx-auto text-muted-foreground" /><p className="mt-3 text-sm">Сохранённых задач пока нет</p></div>}</CardContent></Card>
+          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Границы текущего этапа</CardTitle></CardHeader><CardContent className="space-y-3 text-xs leading-5 text-muted-foreground"><p>Агент использует DeepSeek через AI Gateway. Секреты провайдера не передаются в браузер.</p><p>Интернет-поиск, Telegram, Avito и изменение данных появятся только после подключения соответствующих адаптеров и явного подтверждения действий.</p></CardContent></Card>
+        </aside>
+      </div>
+    </div>
+  )
+}
+
 
   return (
     <div className="space-y-5">
@@ -125,7 +182,7 @@ function AgentView() {
         </Card>
         <aside className="space-y-4">
           <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Последние задания</CardTitle><p className="text-xs text-muted-foreground">Нет подключённых задач</p></CardHeader><CardContent><div className="rounded-lg border border-dashed border-white/10 p-4 text-center"><MessageSquareText className="mx-auto text-muted-foreground" /><p className="mt-3 text-sm">История появится после подключения</p></div></CardContent></Card>
-          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Порядок выполнения</CardTitle></CardHeader><CardContent className="space-y-3">{['Анализ запроса', 'Поиск источников', 'Проверка поставщика', 'Расчёт ц��ны', 'Подтверждение'].map((step, index) => <div key={step} className="flex items-center gap-3 text-xs text-muted-foreground"><span className="flex size-6 items-center justify-center rounded-full border border-white/10">{index + 1}</span>{step}</div>)}</CardContent></Card>
+          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Порядок выполнения</CardTitle></CardHeader><CardContent className="space-y-3">{['Анализ запроса', 'Поиск источников', 'Проверка поставщика', 'Расчёт ц����ны', 'Подтверждение'].map((step, index) => <div key={step} className="flex items-center gap-3 text-xs text-muted-foreground"><span className="flex size-6 items-center justify-center rounded-full border border-white/10">{index + 1}</span>{step}</div>)}</CardContent></Card>
         </aside>
       </div>
     </div>
@@ -223,21 +280,57 @@ function SuppliersView() {
   return <div className="space-y-5"><SectionHeading title="Поставщики" description="Карточки продавцов и история проверок качества." action={<Button variant="outline"><Plus data-icon="inline-start" /> Добавить поставщика</Button>} /><DemoNotice /><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Список поставщиков</CardTitle><p className="text-xs text-muted-foreground">Рейтинги не отображаются без подтверждённых данных</p></CardHeader><div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Поставщик</TableHead><TableHead>Площадка</TableHead><TableHead>Отзывы</TableHead><TableHead>Проверка</TableHead><TableHead className="text-right">Товары</TableHead></TableRow></TableHeader><TableBody>{rows.map((row, index) => <TableRow key={row.name}><TableCell className="font-medium">{row.name}</TableCell><TableCell>{row.platform}</TableCell><TableCell className="text-muted-foreground">{row.reviews}</TableCell><TableCell><Badge variant="outline" className="border-white/10 text-muted-foreground">{row.history}</Badge></TableCell><TableCell className="text-right">{demoProducts.filter((product) => product.supplier === row.name).length}</TableCell></TableRow>)}</TableBody></Table></div></Card><p className="text-xs text-muted-foreground">Поля рейтинга, количества заказов и стабильности наличия появятся после подключения источника данных.</p></div>
 }
 
-function PricingView() {
-  const [values, setValues] = useState<PricingInputs>({ purchasePriceCny: 286, cnyToRub: 12.7, brokerFeePercent: 5, chinaShippingRub: 250, internationalShippingRub: 950, extraCostsRub: 150, otherFeesRub: 120, salePriceRub: 18900 })
+function PricingView({ data }: { data: WorkspaceData }) {
+  const [selectedId, setSelectedId] = useState('')
+  const [values, setValues] = useState<PricingInputs>({ purchasePriceCny: 0, cnyToRub: 0, brokerFeePercent: 0, chinaShippingRub: 0, internationalShippingRub: 0, extraCostsRub: 0, otherFeesRub: 0, salePriceRub: 0 })
+  const [pending, startTransition] = useTransition()
+  const [notice, setNotice] = useState('')
+  const [error, setError] = useState('')
+  const product = data.products.find((item) => item.id === selectedId)
   const result = calculatePricing(values)
-  function update(key: keyof PricingInputs, value: string) { setValues((current) => ({ ...current, [key]: Number(value) || 0 })) }
+
+  function update(key: keyof PricingInputs, value: string) {
+    setValues((current) => ({ ...current, [key]: Number(value) || 0 }))
+  }
+
+  function selectProduct(productId: string) {
+    setSelectedId(productId)
+    const selected = data.products.find((item) => item.id === productId)
+    if (selected) setValues((current) => ({ ...current, purchasePriceCny: selected.purchaseCny, salePriceRub: selected.salePriceRub }))
+    setNotice('')
+    setError('')
+  }
+
+  function savePricing() {
+    if (!product || values.cnyToRub <= 0) return
+    setNotice('')
+    setError('')
+    startTransition(async () => {
+      try {
+        const saved = await updateProductPricing(product.id, values.purchasePriceCny, result.landedCostRub, values.salePriceRub)
+        if (!saved.ok) {
+          setError('Товар не найден. Обновите страницу и повторите попытку.')
+          return
+        }
+        setNotice('Себестоимость и цена продажи сохранены в карточке товара.')
+      } catch {
+        setError('Не удалось сохранить цены. Проверьте значения и повторите попытку.')
+      }
+    })
+  }
+
   const fields: { key: keyof PricingInputs; label: string; step?: string }[] = [
-    { key: 'purchasePriceCny', label: 'Закупочная цена, CNY' },
+    { key: 'purchasePriceCny', label: 'Закупочная цена, CNY', step: '0.01' },
     { key: 'cnyToRub', label: 'Курс CNY / RUB', step: '0.01' },
     { key: 'brokerFeePercent', label: 'Комиссия посредника, %', step: '0.1' },
-    { key: 'chinaShippingRub', label: 'Доставка по Китаю, ₽' },
-    { key: 'internationalShippingRub', label: 'Международная доставка, ₽' },
-    { key: 'extraCostsRub', label: 'Дополнительные расходы, ₽' },
-    { key: 'otherFeesRub', label: 'Прочие комиссии, ₽' },
-    { key: 'salePriceRub', label: 'Цена продажи, ₽' },
+    { key: 'chinaShippingRub', label: 'Доставка по Китаю, ₽', step: '0.01' },
+    { key: 'internationalShippingRub', label: 'Международная доставка, ₽', step: '0.01' },
+    { key: 'extraCostsRub', label: 'Дополнительные расходы, ₽', step: '0.01' },
+    { key: 'otherFeesRub', label: 'Прочие комиссии, ₽', step: '0.01' },
+    { key: 'salePriceRub', label: 'Цена продажи, ₽', step: '0.01' },
   ]
-  return <div className="space-y-5"><SectionHeading title="Ценообразование" description="Прозрачный расчёт себестоимости, прибыли и маржинальности." /><DemoNotice>Пример расчёта. Курс введён вручную, актуальность не проверялась.</DemoNotice><div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]"><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Параметры</CardTitle><p className="text-xs text-muted-foreground">Все вычисления выполняются программно</p></CardHeader><CardContent><FieldGroup className="grid gap-4 sm:grid-cols-2">{fields.map(({ key, label, step }) => <Field key={key}><FieldLabel htmlFor={`pricing-${key}`}>{label}</FieldLabel><Input id={`pricing-${key}`} type="number" min="0" step={step ?? '1'} value={values[key]} onChange={(event) => update(key, event.target.value)} /></Field>)}</FieldGroup></CardContent></Card><div className="space-y-4"><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Итог</CardTitle></CardHeader><CardContent className="space-y-3"><ResultRow label="Закупка в рублях" value={formatRub(result.purchaseRub)} /><ResultRow label="Комиссия посредника" value={formatRub(result.brokerFeeRub)} /><Separator className="bg-white/10" /><ResultRow label="Себестоимость" value={formatRub(result.landedCostRub)} strong /><ResultRow label="Цена продажи" value={formatRub(values.salePriceRub)} /><div className="rounded-lg border border-white/[0.07] bg-white/[0.025] p-3"><div className="flex items-center justify-between"><span className="text-sm text-muted-foreground">Прибыль</span><span className={`font-semibold tabular-nums ${result.profitRub >= 0 ? 'text-emerald-200' : 'text-rose-200'}`}>{formatRub(result.profitRub)}</span></div><div className="mt-2 flex items-center justify-between text-xs text-muted-foreground"><span>Маржа {result.marginPercent.toFixed(1)}%</span><span>Наценка {result.markupPercent.toFixed(1)}%</span></div></div></CardContent></Card><p className="px-1 text-xs leading-5 text-muted-foreground">Расчёт не заменяет проверку комиссии площадки и фактической стоимости доставки. Сохранение настроек будет доступно после подключения базы.</p></div></div></div>
+
+  return <div className="flex flex-col gap-5"><SectionHeading title="Ценообразование" description="Рассчитайте и сохраните себестоимость и цену реального товара." /><p className="text-sm text-muted-foreground">Курс CNY вводится вручную и не обновляется автоматически. Доставка и комиссии в расчёте не сохраняются отдельно.</p><div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]"><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Параметры расчёта</CardTitle><p className="text-xs text-muted-foreground">Выберите товар или внесите значения вручную.</p></CardHeader><CardContent><FieldGroup className="grid gap-4 sm:grid-cols-2"><Field className="sm:col-span-2"><FieldLabel htmlFor="pricing-product">Карточка товара</FieldLabel><select id="pricing-product" value={selectedId} onChange={(event) => selectProduct(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3 text-sm"><option value="">Расчёт без сохранения в товар</option>{data.products.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>{fields.map(({ key, label, step }) => <Field key={key}><FieldLabel htmlFor={`pricing-${key}`}>{label}</FieldLabel><Input id={`pricing-${key}`} type="number" min="0" step={step ?? '0.01'} value={values[key]} onChange={(event) => update(key, event.target.value)} /></Field>)}</FieldGroup></CardContent></Card><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Итог</CardTitle></CardHeader><CardContent className="flex flex-col gap-3"><ResultRow label="Закупка в рублях" value={formatRub(result.purchaseRub)} /><ResultRow label="Комиссия посредника" value={formatRub(result.brokerFeeRub)} /><Separator className="bg-white/10" /><ResultRow label="Себестоимость" value={formatRub(result.landedCostRub)} strong /><ResultRow label="Цена продажи" value={formatRub(values.salePriceRub)} /><div className="rounded-lg border border-white/[0.07] bg-white/[0.025] p-3"><div className="flex items-center justify-between"><span className="text-sm text-muted-foreground">Прибыль</span><span className={`font-semibold tabular-nums ${result.profitRub >= 0 ? 'text-emerald-200' : 'text-rose-200'}`}>{formatRub(result.profitRub)}</span></div><div className="mt-2 flex items-center justify-between text-xs text-muted-foreground"><span>Маржа {result.marginPercent.toFixed(1)}%</span><span>Наценка {result.markupPercent.toFixed(1)}%</span></div></div>{notice && <p role="status" className="text-sm text-emerald-200">{notice}</p>}{error && <p role="alert" className="text-sm text-destructive">{error}</p>}<Button type="button" disabled={!product || values.cnyToRub <= 0 || pending} onClick={savePricing}>{pending ? 'Сохраняю…' : 'Сохранить в товар'}</Button><p className="text-xs leading-5 text-muted-foreground">Для ручного расчёта укажите фактический курс. Сохранение обновляет закупку в CNY, себестоимость в RUB и цену продажи.</p></CardContent></Card></div></div>
 }
 
 function ResultRow({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) { return <div className="flex items-center justify-between gap-3 text-sm"><span className={strong ? 'font-medium' : 'text-muted-foreground'}>{label}</span><span className={`tabular-nums ${strong ? 'font-semibold' : ''}`}>{value}</span></div> }
@@ -245,7 +338,7 @@ function ResultRow({ label, value, strong = false }: { label: string; value: str
 function PublicationView({ channel }: { channel: 'Avito' | 'Telegram' }) {
   const [text, setText] = useState('')
   const [notice, setNotice] = useState('')
-  function saveDraft(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); setNotice('Черновик подготовлен тольк�� в текущем окне. Публикация не отправлялась.') }
+  function saveDraft(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); setNotice('Черновик подготовлен тол��к�� в текущем окне. Публикация не отправлялась.') }
   return <div className="space-y-5"><SectionHeading title={channel === 'Avito' ? 'Avito' : 'Telegram'} description={`Подготовка карточек и публикаций для ${channel}.`} action={<Badge variant="outline" className="w-fit border-white/10 text-muted-foreground"><span className="mr-2 size-1.5 rounded-full bg-white/20" />Интеграция не подключена</Badge>} /><DemoNotice>Публикация отключена до настройки официального канала и подтверждения пользователя</DemoNotice><div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]"><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Редактор публикации</CardTitle><p className="text-xs text-muted-foreground">Сначала сохраните черновик и проверьте текст</p></CardHeader><CardContent><form onSubmit={saveDraft} className="space-y-4"><FieldGroup><Field><FieldLabel htmlFor="listing-title">Заголовок</FieldLabel><Input id="listing-title" placeholder="Назв��ние модели" /></Field><Field><FieldLabel htmlFor="listing-text">Описание</FieldLabel><Textarea id="listing-text" value={text} onChange={(event) => setText(event.target.value)} className="min-h-40 resize-y" placeholder="Описание товара, материалы, размеры и условия заказа" /></Field></FieldGroup><div className="flex flex-wrap items-center justify-between gap-3"><Button type="button" variant="outline"><ImagePlus data-icon="inline-start" /> Выбрать фото</Button><Button type="submit" variant="secondary">Сохранить черновик</Button></div></form>{notice && <p role="status" className="mt-4 text-xs text-muted-foreground">{notice}</p>}</CardContent></Card><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Проверка перед публикацией</CardTitle></CardHeader><CardContent className="space-y-3 text-sm">{['Текст карточки проверен', 'Фото выбраны', 'Цена подтверждена', 'Публикация подтверждена'].map((item) => <div key={item} className="flex items-center gap-3 text-muted-foreground"><span className="size-4 rounded-full border border-white/15" />{item}</div>)}<Separator className="bg-white/10" /><p className="text-xs leading-5 text-muted-foreground">Пока {channel} не подключён, отправка и статус публикации не имитируются.</p></CardContent></Card></div></div>
 }
 
@@ -263,15 +356,8 @@ function AiUsageView() {
   return <div className="space-y-5"><SectionHeading title="Расходы на AI" description="Фактическое потребление токенов и стоимость запросов." /><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardContent className="flex flex-col items-center justify-center py-16 text-center"><Wallet className="text-muted-foreground" /><h2 className="mt-4 text-lg font-medium">Фактических расходов пока нет</h2><p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">AI-провайдер не подключён. Токены и стоимость не оцениваются и не придумываются. После подключения появятся логи по моделям и задачам.</p><div className="mt-6 w-full max-w-sm rounded-lg border border-white/[0.07] p-4 text-left"><div className="flex justify-between text-xs"><span className="text-muted-foreground">Месячный бюджет</span><span>не задан</span></div><Progress value={0} className="mt-3 h-1.5" /><div className="mt-2 flex justify-between text-[10px] text-muted-foreground"><span>Нет данных</span><span>Пороговые уведомления не настроены</span></div></div></CardContent></Card></div>
 }
 
-function SettingsView() {
-  const integrations = [
-    { name: 'Neon', detail: 'Каталог, заказы и поставщики сохраняются в Neon', state: 'Подключён', connected: true },
-    { name: 'Vercel AI Gateway', detail: 'Доступен в проекте · генерация пока не включена', state: 'Доступен', connected: false },
-    { name: 'DeepSeek API', detail: 'Ключ не настроен на сервере', state: 'Не настроен', connected: false },
-    { name: 'Telegram Bot API', detail: 'Токен не задан', state: 'Не подключён', connected: false },
-    { name: 'Avito API', detail: 'Авторизация не настроена', state: 'Не подключён', connected: false },
-  ]
-  return <div className="space-y-5"><SectionHeading title="Настройки" description="Провайдеры, каналы продаж и правила работы приложения." /><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Подключения</CardTitle><p className="text-xs text-muted-foreground">Секреты хранятся только в серверной конфигурации</p></CardHeader><CardContent className="divide-y divide-white/[0.06]">{integrations.map((item) => <div key={item.name} className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center"><span className={`size-2 shrink-0 rounded-full ${item.connected ? 'bg-emerald-300' : item.name === 'Neon' ? 'bg-amber-200' : 'bg-white/20'}`} /><div className="min-w-0 flex-1"><p className="text-sm font-medium">{item.name}</p><p className="mt-1 text-xs text-muted-foreground">{item.detail}</p></div><Badge variant="outline" className={item.connected ? 'w-fit border-emerald-300/20 text-emerald-100' : 'w-fit border-white/10 text-muted-foreground'}>{item.state}</Badge></div>)}</CardContent></Card><div className="grid gap-4 xl:grid-cols-2"><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Ценообразование</CardTitle></CardHeader><CardContent className="space-y-3"><ResultRow label="Основная валюта" value="RUB" /><ResultRow label="Дополнительная валюта" value="CNY" /><ResultRow label="Часовой пояс" value="Europe/Moscow" /><Button variant="outline" size="sm">Изменить параметры</Button></CardContent></Card><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Безопасность</CardTitle></CardHeader><CardContent className="space-y-3 text-xs leading-5 text-muted-foreground"><p>Вход и регистрация в приложении отключены. Данные доступны на странице без проверки пользователя.</p><p>Перед публикацией ограничьте доступ к деплою средствами Vercel: публичный адрес сам по себе не защищает данные.</p></CardContent></Card></div></div>
+function SettingsView({ integrations }: { integrations: IntegrationStatus[] }) {
+  return <div className="space-y-5"><SectionHeading title="Настройки" description="Провайдеры, каналы продаж и правила работы приложения." /><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Подключения</CardTitle><p className="text-xs text-muted-foreground">Секреты не отображаются в интерфейсе. Добавляйте переменные в Vars проекта; статусы показывают только наличие конфигурации, не успешность API-проверки.</p></CardHeader><CardContent className="divide-y divide-white/[0.06]">{integrations.map((item) => <div key={item.name} className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center"><span className={`size-2 shrink-0 rounded-full ${item.configured ? 'bg-emerald-300' : 'bg-white/20'}`} /><div className="min-w-0 flex-1"><p className="text-sm font-medium">{item.name}</p><p className="mt-1 text-xs text-muted-foreground">{item.detail}</p>{item.requiredVariables.length > 0 && <p className="mt-1 break-words font-mono text-[10px] text-muted-foreground/80">Переменные: {item.requiredVariables.join(', ')}</p>}</div><Badge variant="outline" className={item.configured ? 'w-fit border-emerald-300/20 text-emerald-100' : 'w-fit border-white/10 text-muted-foreground'}>{item.state}</Badge></div>)}</CardContent></Card><div className="grid gap-4 xl:grid-cols-2"><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Ценообразование</CardTitle></CardHeader><CardContent className="space-y-3"><ResultRow label="Основная валюта" value="RUB" /><ResultRow label="Дополнительная валюта" value="CNY" /><ResultRow label="Часовой пояс" value="Europe/Moscow" /><Button variant="outline" size="sm">Изменить параметры</Button></CardContent></Card><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Безопасность</CardTitle></CardHeader><CardContent className="space-y-3 text-xs leading-5 text-muted-foreground"><p>Вход и регистрация в приложении отключены. Данные доступны на странице без проверки пользователя.</p><p>Перед публикацией ограничьте доступ к деплою средствами Vercel: публичный адрес сам по себе не защищает данные.</p></CardContent></Card></div></div>
 }
 
 function PlaceholderView({ section, onNavigate }: Pick<WorkspaceViewsProps, 'section' | 'onNavigate'>) {
@@ -289,13 +375,12 @@ export function WorkspaceView({ section, onNavigate, data }: WorkspaceViewsProps
     case 'orders': return <LiveOrdersView data={data} />
     case 'suppliers': return <LiveSuppliersView data={data} />
     case 'analytics': return <LiveAnalyticsView data={data} onNavigate={onNavigate} />
-    case 'agent': return <AgentView />
+    case 'agent': return <AgentView initialTasks={agentTasks} />
     case 'search': return <SearchView />
-    case 'pricing': return <PricingView />
+    case 'pricing': return <PricingView data={data} />
     case 'avito': return <PublicationView channel="Avito" />
     case 'telegram': return <PublicationView channel="Telegram" />
-    case 'editor': return <EditorView />
-    case 'analytics': return <AnalyticsView />
+    case 'editor': return <LiveEditorView data={data} />
     case 'ai-usage': return <AiUsageView />
     case 'settings': return <SettingsView />
     default: return <PlaceholderView section={section} onNavigate={onNavigate} />

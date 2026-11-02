@@ -70,6 +70,7 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
       purchaseRub: amount(product.purchasePriceRub),
       salePriceRub: amount(product.salePriceRub),
       sizes: Array.isArray(product.sizes) ? product.sizes : [],
+      description: product.description,
       status: product.status === 'review' ? 'На рассмотрении' : product.status === 'active' ? 'В каталоге' : product.status === 'rejected' ? 'Отклонён' : 'Черновик',
       listingStatus: product.listingStatus === 'published' ? 'Опубликован' : product.listingStatus === 'draft' ? 'Черновик' : 'Не опубликован',
     }
@@ -114,7 +115,9 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
       id: supplier.id,
       name: supplier.name,
       platform: supplier.platform || 'Не указана',
+      storeUrl: supplier.storeUrl,
       status: supplier.status,
+      notes: supplier.notes,
       productCount: supplierProductCounts.get(supplier.id) ?? 0,
     })),
     revenueTrend,

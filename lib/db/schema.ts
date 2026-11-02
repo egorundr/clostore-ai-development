@@ -1,4 +1,4 @@
-import { boolean, index, jsonb, numeric, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
+import { boolean, index, integer, jsonb, numeric, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
 
 export const user = pgTable('user', {
   id: text('id').primaryKey(),
@@ -76,6 +76,19 @@ export const products = pgTable('products', {
   createdAt: timestamp('createdAt').notNull().defaultNow(),
   updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 }, (table) => [index('products_user_created_idx').on(table.userId, table.createdAt)])
+
+export const agentTasks = pgTable('agent_tasks', {
+  id: text('id').primaryKey(),
+  userId: text('userId').notNull(),
+  prompt: text('prompt').notNull(),
+  response: text('response').notNull().default(''),
+  status: text('status').notNull().default('completed'),
+  model: text('model').notNull(),
+  inputTokens: integer('inputTokens'),
+  outputTokens: integer('outputTokens'),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+  updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+}, (table) => [index('agent_tasks_user_created_idx').on(table.userId, table.createdAt)])
 
 export const orders = pgTable('orders', {
   id: text('id').primaryKey(),
