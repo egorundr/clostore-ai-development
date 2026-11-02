@@ -81,6 +81,7 @@ export type WorkspaceProduct = {
   name: string
   category: string
   source: string
+  sourceUrl: string | null
   supplier: string
   supplierId: string | null
   purchaseCny: number

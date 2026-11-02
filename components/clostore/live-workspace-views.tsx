@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowRight, Check, Package, Plus, Search, Wallet } from 'lucide-react'
-import { createOrder, createProduct, createSupplier, updateOrder, updateProductReview } from '@/app/actions/workspace'
+import { createOrder, createProduct, createSupplier, updateOrder, updateProduct, updateProductReview } from '@/app/actions/workspace'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -136,8 +136,64 @@ function OrderDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (ope
   )
 }
 
+function ProductEditDialog({ product, onOpenChange }: { product: WorkspaceProduct | null; onOpenChange: (product: WorkspaceProduct | null) => void }) {
+  const router = useRouter()
+  const [pending, startTransition] = useTransition()
+  const [error, setError] = useState('')
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!product) return
+
+    const payload = new FormData(event.currentTarget)
+    setError('')
+    startTransition(async () => {
+      try {
+        const result = await updateProduct(product.id, payload)
+        if (!result.ok) {
+          setError('Товар не найден в личном каталоге.')
+          return
+        }
+        onOpenChange(null)
+        router.refresh()
+      } catch {
+        setError('Не удалось обновить товар. Проверьте поля и попробуйте ещё раз.')
+      }
+    })
+  }
+
+  if (!product) return null
+
+  return (
+    <Dialog open={Boolean(product)} onOpenChange={(open) => { if (!open) onOpenChange(null) }}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto border-white/10 bg-[#1b1d20] sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Редактировать товар</DialogTitle>
+          <DialogDescription>Изменения сохраняются в личном каталоге.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="flex flex-col gap-5">
+          <FieldGroup className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field className="sm:col-span-2"><FieldLabel htmlFor="edit-product-name">Название</FieldLabel><Input id="edit-product-name" name="name" maxLength={180} defaultValue={product.name} required /></Field>
+            <Field><FieldLabel htmlFor="edit-product-category">Категория</FieldLabel><Input id="edit-product-category" name="category" maxLength={120} defaultValue={product.category} /></Field>
+            <Field><FieldLabel htmlFor="edit-product-source">Источник / площадка</FieldLabel><Input id="edit-product-source" name="source" maxLength={120} defaultValue={product.source} /></Field>
+            <Field><FieldLabel htmlFor="edit-product-supplier">Поставщик</FieldLabel><Input id="edit-product-supplier" name="supplierName" maxLength={180} defaultValue={product.supplier === '—' ? '' : product.supplier} /></Field>
+            <Field><FieldLabel htmlFor="edit-product-sizes">Размеры через запятую</FieldLabel><Input id="edit-product-sizes" name="sizes" maxLength={240} defaultValue={product.sizes.join(', ')} /></Field>
+            <Field><FieldLabel htmlFor="edit-product-cny">Закупка, CNY</FieldLabel><Input id="edit-product-cny" name="purchasePriceCny" type="number" min="0" max="100000000" step="0.01" defaultValue={product.purchaseCny} /></Field>
+            <Field><FieldLabel htmlFor="edit-product-cost">Себестоимость, ₽</FieldLabel><Input id="edit-product-cost" name="purchasePriceRub" type="number" min="0" max="100000000" step="0.01" defaultValue={product.purchaseRub} /></Field>
+            <Field><FieldLabel htmlFor="edit-product-price">Цена продажи, ₽</FieldLabel><Input id="edit-product-price" name="salePriceRub" type="number" min="0" max="100000000" step="0.01" defaultValue={product.salePriceRub} /></Field>
+            <Field className="sm:col-span-2"><FieldLabel htmlFor="edit-product-url">Ссылка на товар</FieldLabel><Input id="edit-product-url" name="sourceUrl" type="url" maxLength={2048} defaultValue={product.sourceUrl ?? ''} /></Field>
+          </FieldGroup>
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+          <DialogFooter><Button type="button" variant="outline" onClick={() => onOpenChange(null)}>Отмена</Button><Button type="submit" disabled={pending}>{pending ? 'Сохраняю…' : 'Сохранить изменения'}</Button></DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 export function LiveCatalogView({ data }: { data: WorkspaceData }) {
   const [open, setOpen] = useState(false)
+  const [editingProduct, setEditingProduct] = useState<WorkspaceProduct | null>(null)
   const [search, setSearch] = useState('')
   const filtered = useMemo(() => data.products.filter((product) => `${product.name} ${product.category} ${product.supplier}`.toLowerCase().includes(search.toLowerCase())), [data.products, search])
 
@@ -148,11 +204,12 @@ export function LiveCatalogView({ data }: { data: WorkspaceData }) {
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><CardTitle>Товары <span className="ml-2 text-sm font-normal text-muted-foreground">{data.products.length}</span></CardTitle><div className="relative w-full sm:max-w-xs"><Search aria-hidden="true" className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" /><Input aria-label="Поиск по каталогу" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Название, категория, поставщик" className="pl-9" /></div></CardHeader>
         <CardContent className="overflow-x-auto">
           <Table><TableHeader><TableRow><TableHead>Товар</TableHead><TableHead>Поставщик</TableHead><TableHead>Закупка</TableHead><TableHead>Цена продажи</TableHead><TableHead>Размеры</TableHead><TableHead>Проверка</TableHead><TableHead>Публикация</TableHead></TableRow></TableHeader>
-            <TableBody>{filtered.length ? filtered.map((product) => <TableRow key={product.id}><TableCell><span className="font-medium">{product.name}</span><span className="mt-1 block text-xs text-muted-foreground">{product.category || 'Без категории'}</span></TableCell><TableCell>{product.supplier}</TableCell><TableCell>{product.purchaseCny ? `${product.purchaseCny.toLocaleString('ru-RU')} CNY` : '—'}</TableCell><TableCell>{product.salePriceRub ? formatRub(product.salePriceRub) : '—'}</TableCell><TableCell>{product.sizes.length ? product.sizes.join(', ') : '—'}</TableCell><TableCell><Badge variant="outline" className={statusTone(product.status)}>{product.status}</Badge></TableCell><TableCell><Badge variant="outline" className={statusTone(product.listingStatus)}>{product.listingStatus}</Badge></TableCell></TableRow>) : <DataTableEmpty text={search ? 'Ничего не найдено.' : 'Каталог пока пуст. Добавьте первый товар.'} />}</TableBody>
+            <TableBody>{filtered.length ? filtered.map((product) => <TableRow key={product.id}><TableCell><div className="flex items-start justify-between gap-3"><div><span className="font-medium">{product.name}</span><span className="mt-1 block text-xs text-muted-foreground">{product.category || 'Без категории'}</span></div><Button type="button" size="sm" variant="ghost" className="shrink-0" aria-label={`Редактировать ${product.name}`} onClick={() => setEditingProduct(product)}>Изменить</Button></div></TableCell><TableCell>{product.supplier}</TableCell><TableCell>{product.purchaseCny ? `${product.purchaseCny.toLocaleString('ru-RU')} CNY` : '—'}</TableCell><TableCell>{product.salePriceRub ? formatRub(product.salePriceRub) : '—'}</TableCell><TableCell>{product.sizes.length ? product.sizes.join(', ') : '—'}</TableCell><TableCell><Badge variant="outline" className={statusTone(product.status)}>{product.status}</Badge></TableCell><TableCell><Badge variant="outline" className={statusTone(product.listingStatus)}>{product.listingStatus}</Badge></TableCell></TableRow>) : <DataTableEmpty text={search ? 'Ничего не найдено.' : 'Каталог пока пуст. Добавьте первый товар.'} />}</TableBody>
           </Table>
         </CardContent>
       </Card>
       <ProductDialog open={open} onOpenChange={setOpen} />
+      <ProductEditDialog product={editingProduct} onOpenChange={setEditingProduct} />
     </div>
   )
 }

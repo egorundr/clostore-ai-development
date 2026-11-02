@@ -2,17 +2,10 @@
 
 import { randomUUID } from 'node:crypto'
 import { and, eq } from 'drizzle-orm'
-import { headers } from 'next/headers'
 import { revalidatePath } from 'next/cache'
-import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { orders, products, suppliers } from '@/lib/db/schema'
-
-async function getUserId() {
-  const session = await auth.api.getSession({ headers: await headers() })
-  if (!session?.user) throw new Error('Unauthorized')
-  return session.user.id
-}
+import { getPersonalWorkspaceUserId } from '@/lib/personal-workspace'
 
 function readText(formData: FormData, key: string, maxLength: number, required = false) {
   const value = formData.get(key)
@@ -31,7 +24,7 @@ function readAmount(formData: FormData, key: string, required = false) {
 }
 
 export async function createSupplier(formData: FormData) {
-  const userId = await getUserId()
+  const userId = await getPersonalWorkspaceUserId()
   const name = readText(formData, 'name', 180, true)
   const platform = readText(formData, 'platform', 120)
   const rawStoreUrl = readText(formData, 'storeUrl', 2048)
@@ -66,7 +59,7 @@ export async function createSupplier(formData: FormData) {
 }
 
 export async function createProduct(formData: FormData) {
-  const userId = await getUserId()
+  const userId = await getPersonalWorkspaceUserId()
   const name = readText(formData, 'name', 180, true)
   const category = readText(formData, 'category', 120)
   const source = readText(formData, 'source', 120)
@@ -119,8 +112,72 @@ export async function createProduct(formData: FormData) {
   return { ok: true }
 }
 
+export async function updateProduct(productId: string, formData: FormData) {
+  const userId = await getPersonalWorkspaceUserId()
+  if (typeof productId !== 'string' || productId.length > 64) throw new Error('Invalid input')
+
+  const name = readText(formData, 'name', 180, true)
+  const category = readText(formData, 'category', 120)
+  const source = readText(formData, 'source', 120)
+  const supplierName = readText(formData, 'supplierName', 180)
+  const rawSourceUrl = readText(formData, 'sourceUrl', 2048)
+  const purchasePriceCny = readAmount(formData, 'purchasePriceCny')
+  const purchasePriceRub = readAmount(formData, 'purchasePriceRub')
+  const salePriceRub = readAmount(formData, 'salePriceRub')
+  const sizes = [...new Set(readText(formData, 'sizes', 240).split(',').map((size) => size.trim()).filter(Boolean))].slice(0, 20)
+  let sourceUrl: string | null = null
+
+  if (rawSourceUrl) {
+    try {
+      const url = new URL(rawSourceUrl)
+      if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('Invalid URL')
+      sourceUrl = url.toString()
+    } catch {
+      throw new Error('Invalid input')
+    }
+  }
+
+  const updated = await db.transaction(async (tx) => {
+    const [existingProduct] = await tx.select({ id: products.id }).from(products)
+      .where(and(eq(products.id, productId), eq(products.userId, userId)))
+      .limit(1)
+    if (!existingProduct) return false
+
+    let supplierId: string | null = null
+    if (supplierName) {
+      const [existingSupplier] = await tx.select({ id: suppliers.id }).from(suppliers)
+        .where(and(eq(suppliers.userId, userId), eq(suppliers.name, supplierName)))
+        .limit(1)
+
+      supplierId = existingSupplier?.id ?? randomUUID()
+      if (!existingSupplier) {
+        await tx.insert(suppliers).values({ id: supplierId, userId, name: supplierName, platform: source || 'Свой источник' })
+      }
+    }
+
+    await tx.update(products).set({
+      name,
+      category,
+      source,
+      supplierId,
+      sourceUrl,
+      purchasePriceCny: String(purchasePriceCny),
+      purchasePriceRub: String(purchasePriceRub),
+      salePriceRub: String(salePriceRub),
+      sizes,
+      updatedAt: new Date(),
+    }).where(and(eq(products.id, productId), eq(products.userId, userId)))
+
+    return true
+  })
+
+  if (!updated) return { ok: false }
+  revalidatePath('/')
+  return { ok: true }
+}
+
 export async function updateProductReview(productId: string, decision: 'approved' | 'rejected') {
-  const userId = await getUserId()
+  const userId = await getPersonalWorkspaceUserId()
   if (typeof productId !== 'string' || productId.length > 64) throw new Error('Invalid input')
 
   const [updated] = await db.update(products)
@@ -134,7 +191,7 @@ export async function updateProductReview(productId: string, decision: 'approved
 }
 
 export async function createOrder(formData: FormData) {
-  const userId = await getUserId()
+  const userId = await getPersonalWorkspaceUserId()
   const customerName = readText(formData, 'customer', 160, true)
   const customerContact = readText(formData, 'contact', 240, true)
   const productName = readText(formData, 'product', 180, true)
@@ -160,7 +217,7 @@ export async function createOrder(formData: FormData) {
 }
 
 export async function updateOrder(orderId: string, formData: FormData) {
-  const userId = await getUserId()
+  const userId = await getPersonalWorkspaceUserId()
   if (typeof orderId !== 'string' || orderId.length > 64) throw new Error('Invalid input')
 
   const status = readText(formData, 'status', 40, true)

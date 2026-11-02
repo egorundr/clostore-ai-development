@@ -1,14 +1,12 @@
-import { headers } from 'next/headers'
-import { redirect } from 'next/navigation'
 import { CloStoreApp } from '@/components/clostore/app-shell'
-import { auth } from '@/lib/auth'
+import { getPersonalWorkspaceUserId } from '@/lib/personal-workspace'
 import { getWorkspaceData } from '@/lib/workspace-data'
 
+export const dynamic = 'force-dynamic'
+
 export default async function Page() {
-  const session = await auth.api.getSession({ headers: await headers() })
-  if (!session?.user) redirect('/sign-in')
+  const userId = await getPersonalWorkspaceUserId()
+  const data = await getWorkspaceData(userId)
 
-  const data = await getWorkspaceData(session.user.id)
-
-  return <CloStoreApp initialData={data} user={{ name: session.user.name, email: session.user.email }} />
+  return <CloStoreApp initialData={data} />
 }

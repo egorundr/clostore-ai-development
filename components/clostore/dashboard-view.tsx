@@ -113,7 +113,7 @@ export function DashboardView({ data, onNavigate }: DashboardViewProps) {
           <CardContent><div className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] p-4"><div className="flex size-9 items-center justify-center rounded-lg bg-white/[0.05] text-muted-foreground"><Sparkles /></div><p className="mt-3 text-sm font-medium">Внешние задачи отключены</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Автоматизация и публикация не запускались. Подключите провайдера и отдельно подтвердите действия.</p><Button className="mt-4 w-full" variant="outline" onClick={() => onNavigate('settings')}>Настройки <ArrowRight data-icon="inline-end" /></Button></div><div className="mt-4 flex items-center justify-between text-xs text-muted-foreground"><span>Средний чек</span><span className="text-foreground">{data.summary.orderCount ? formatRub(averageCheck) : '—'}</span></div></CardContent>
         </Card>
       </div>
-      <p className="flex items-center justify-center gap-2 pb-1 text-[11px] text-muted-foreground/70"><span className="size-1.5 rounded-full bg-emerald-300" />Показатели загружены из Neon с фильтрацией по аккаунту</p>
+      <p className="flex items-center justify-center gap-2 pb-1 text-[11px] text-muted-foreground/70"><span className="size-1.5 rounded-full bg-emerald-300" />Показатели загружены из Neon для личного пространства</p>
     </div>
   )
 }

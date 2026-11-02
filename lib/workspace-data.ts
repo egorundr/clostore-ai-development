@@ -63,6 +63,7 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
       name: product.name,
       category: product.category,
       source: product.source || '—',
+      sourceUrl: product.sourceUrl,
       supplier: product.supplierId ? supplierNames.get(product.supplierId) ?? '—' : '—',
       supplierId: product.supplierId,
       purchaseCny: amount(product.purchasePriceCny),
