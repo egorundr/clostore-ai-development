@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowRight, Check, Package, Plus, Search, Wallet } from 'lucide-react'
-import { createOrder, createProduct, updateOrder, updateProductReview } from '@/app/actions/workspace'
+import { createOrder, createProduct, createSupplier, updateOrder, updateProductReview } from '@/app/actions/workspace'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -277,8 +277,60 @@ function ReviewCard({ product, pending, onDecide }: { product: WorkspaceProduct;
   return <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader className="flex-row items-start justify-between gap-3"><div><CardTitle className="text-base">{product.name}</CardTitle><p className="mt-1 text-xs text-muted-foreground">{product.category || 'Без категории'} · {product.source}</p></div><Badge variant="outline" className={statusTone(product.status)}>{product.status}</Badge></CardHeader><CardContent className="flex flex-col gap-4"><div className="grid grid-cols-2 gap-3 rounded-lg border border-white/[0.06] p-3 text-sm"><div><p className="text-xs text-muted-foreground">Закупка</p><p className="mt-1">{product.purchaseCny ? `${product.purchaseCny.toLocaleString('ru-RU')} CNY` : 'Не задана'}</p></div><div><p className="text-xs text-muted-foreground">Цена продажи</p><p className="mt-1">{product.salePriceRub ? formatRub(product.salePriceRub) : 'Не задана'}</p></div><div><p className="text-xs text-muted-foreground">Себестоимость</p><p className="mt-1">{product.purchaseRub ? formatRub(product.purchaseRub) : 'Не задана'}</p></div><div><p className="text-xs text-muted-foreground">Размеры</p><p className="mt-1">{product.sizes.length ? product.sizes.join(', ') : 'Не заданы'}</p></div></div>{product.supplier && product.supplier !== '—' && <p className="text-xs text-muted-foreground">Поставщик: {product.supplier}</p>}<div className="flex flex-wrap justify-end gap-2"><Button variant="outline" disabled={pending} onClick={() => onDecide(product.id, 'rejected')}>Отклонить</Button><Button disabled={pending} onClick={() => onDecide(product.id, 'approved')}><Check data-icon="inline-start" />{pending ? 'Сохраняю…' : 'Одобрить'}</Button></div></CardContent></Card>
 }
 
+function SupplierDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const router = useRouter()
+  const [pending, startTransition] = useTransition()
+  const [error, setError] = useState('')
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const form = event.currentTarget
+    const payload = new FormData(form)
+    setError('')
+    startTransition(async () => {
+      try {
+        const result = await createSupplier(payload)
+        if (!result.ok) {
+          setError('Поставщик с таким названием уже существует.')
+          return
+        }
+        form.reset()
+        onOpenChange(false)
+        router.refresh()
+      } catch {
+        setError('Не удалось сохранить поставщика. Проверьте поля и попробуйте ещё раз.')
+      }
+    })
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="border-white/10 bg-[#1b1d20] sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Новый поставщик</DialogTitle>
+          <DialogDescription>Запись сохранится в вашей базе поставщиков.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="flex flex-col gap-5">
+          <FieldGroup>
+            <Field><FieldLabel htmlFor="supplier-name">Название</FieldLabel><Input id="supplier-name" name="name" maxLength={180} required /></Field>
+            <Field><FieldLabel htmlFor="supplier-platform">Площадка или источник</FieldLabel><Input id="supplier-platform" name="platform" maxLength={120} placeholder="Например, 1688" /></Field>
+            <Field><FieldLabel htmlFor="supplier-url">Ссылка на магазин</FieldLabel><Input id="supplier-url" name="storeUrl" type="url" maxLength={2048} /></Field>
+          </FieldGroup>
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
+            <Button type="submit" disabled={pending}>{pending ? 'Сохраняю…' : 'Сохранить поставщика'}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 export function LiveSuppliersView({ data }: { data: WorkspaceData }) {
-  return <div className="flex flex-col gap-5"><SectionHeading title="Поставщики" description="Поставщики и количество товаров, связанных с ними." /><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Список поставщиков <span className="ml-2 text-sm font-normal text-muted-foreground">{data.suppliers.length}</span></CardTitle></CardHeader><CardContent className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Поставщик</TableHead><TableHead>Источник</TableHead><TableHead>Товары</TableHead><TableHead>Статус</TableHead></TableRow></TableHeader><TableBody>{data.suppliers.length ? data.suppliers.map((supplier) => <TableRow key={supplier.id}><TableCell className="font-medium">{supplier.name}</TableCell><TableCell>{supplier.platform}</TableCell><TableCell>{supplier.productCount}</TableCell><TableCell><Badge variant="outline" className={statusTone(supplier.status === 'active' ? 'Активен' : supplier.status)}>{supplier.status === 'active' ? 'Активен' : supplier.status}</Badge></TableCell></TableRow>) : <DataTableEmpty text="Поставщики появятся после добавления товара с поставщиком." />}</TableBody></Table></CardContent></Card></div>
+  const [open, setOpen] = useState(false)
+
+  return <div className="flex flex-col gap-5"><SectionHeading title="Поставщики" description="Поставщики и количество товаров, связанных с ними." action={<Button onClick={() => setOpen(true)}><Plus data-icon="inline-start" /> Добавить поставщика</Button>} /><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Список поставщиков <span className="ml-2 text-sm font-normal text-muted-foreground">{data.suppliers.length}</span></CardTitle></CardHeader><CardContent className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Поставщик</TableHead><TableHead>Источник</TableHead><TableHead>Товары</TableHead><TableHead>Статус</TableHead></TableRow></TableHeader><TableBody>{data.suppliers.length ? data.suppliers.map((supplier) => <TableRow key={supplier.id}><TableCell className="font-medium">{supplier.name}</TableCell><TableCell>{supplier.platform}</TableCell><TableCell>{supplier.productCount}</TableCell><TableCell><Badge variant="outline" className={statusTone(supplier.status === 'active' ? 'Активен' : supplier.status)}>{supplier.status === 'active' ? 'Активен' : supplier.status}</Badge></TableCell></TableRow>) : <DataTableEmpty text="Поставщики появятся после добавления товара с поставщиком." />}</TableBody></Table></CardContent></Card><SupplierDialog open={open} onOpenChange={setOpen} /></div>
 }
 
 export function LiveAnalyticsView({ data, onNavigate }: { data: WorkspaceData; onNavigate: (section: SectionId) => void }) {

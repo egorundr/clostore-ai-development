@@ -30,6 +30,41 @@ function readAmount(formData: FormData, key: string, required = false) {
   return Math.round(value * 100) / 100
 }
 
+export async function createSupplier(formData: FormData) {
+  const userId = await getUserId()
+  const name = readText(formData, 'name', 180, true)
+  const platform = readText(formData, 'platform', 120)
+  const rawStoreUrl = readText(formData, 'storeUrl', 2048)
+  let storeUrl: string | null = null
+
+  if (rawStoreUrl) {
+    try {
+      const url = new URL(rawStoreUrl)
+      if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('Invalid URL')
+      storeUrl = url.toString()
+    } catch {
+      throw new Error('Invalid input')
+    }
+  }
+
+  const [existing] = await db.select({ id: suppliers.id }).from(suppliers)
+    .where(and(eq(suppliers.userId, userId), eq(suppliers.name, name)))
+    .limit(1)
+
+  if (existing) return { ok: false }
+
+  await db.insert(suppliers).values({
+    id: randomUUID(),
+    userId,
+    name,
+    platform,
+    storeUrl,
+  })
+
+  revalidatePath('/')
+  return { ok: true }
+}
+
 export async function createProduct(formData: FormData) {
   const userId = await getUserId()
   const name = readText(formData, 'name', 180, true)
