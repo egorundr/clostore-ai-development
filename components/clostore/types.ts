@@ -109,6 +109,7 @@ export type IntegrationStatus = {
   state: string
   configured: boolean
   requiredVariables: string[]
+  testProvider: 'telegram' | 'avito' | null
 }
 
 export type AgentTaskPreview = {

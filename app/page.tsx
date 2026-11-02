@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function Page() {
   const userId = await getPersonalWorkspaceUserId()
-  const [data, agentTasks, integrations] = await Promise.all([getWorkspaceData(userId), getAgentTasks(), Promise.resolve(getIntegrationStatuses())])
+  const [data, agentTasks, integrations] = await Promise.all([getWorkspaceData(userId), getAgentTasks(), getIntegrationStatuses()])
 
   return <CloStoreApp initialData={data} initialAgentTasks={agentTasks} integrations={integrations} />
 }

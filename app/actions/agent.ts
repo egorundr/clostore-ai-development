@@ -1,7 +1,7 @@
 'use server'
 
 import { randomUUID } from 'node:crypto'
-import { and, desc, eq } from 'drizzle-orm'
+import { and, count, desc, eq, gte, sql } from 'drizzle-orm'
 import { generateText, gateway } from 'ai'
 import { db } from '@/lib/db'
 import { agentTasks } from '@/lib/db/schema'
@@ -11,6 +11,7 @@ import type { AgentTaskPreview } from '@/components/clostore/types'
 const MODEL_ID = 'deepseek/deepseek-v4.1-flash'
 const MAX_PROMPT_LENGTH = 4000
 const HISTORY_LIMIT = 20
+const MAX_TASKS_PER_HOUR = 10
 
 export async function getAgentTasks(): Promise<AgentTaskPreview[]> {
   const userId = await getPersonalWorkspaceUserId()
@@ -46,14 +47,23 @@ export async function runAgentTask(rawPrompt: string) {
 
   const userId = await getPersonalWorkspaceUserId()
   const taskId = randomUUID()
-  await db.insert(agentTasks).values({
-    id: taskId,
-    userId,
-    prompt,
-    response: '',
-    status: 'running',
-    model: MODEL_ID,
+  const canStartTask = await db.transaction(async (transaction) => {
+    await transaction.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${userId})::bigint)`)
+    const [recentTasks] = await transaction.select({ total: count() }).from(agentTasks)
+      .where(and(eq(agentTasks.userId, userId), gte(agentTasks.createdAt, new Date(Date.now() - 60 * 60 * 1000))))
+    if (recentTasks.total >= MAX_TASKS_PER_HOUR) return false
+
+    await transaction.insert(agentTasks).values({
+      id: taskId,
+      userId,
+      prompt,
+      response: '',
+      status: 'running',
+      model: MODEL_ID,
+    })
+    return true
   })
+  if (!canStartTask) return { ok: false as const, reason: 'rate_limited' as const }
 
   try {
     const result = await generateText({

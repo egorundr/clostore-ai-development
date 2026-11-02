@@ -17,6 +17,7 @@ export function getIntegrationStatuses(): IntegrationStatus[] {
       state: isConfigured('DATABASE_URL') ? 'Переменная настроена' : 'Нужен DATABASE_URL',
       configured: isConfigured('DATABASE_URL'),
       requiredVariables: ['DATABASE_URL'],
+      testProvider: null,
     },
     {
       name: 'Vercel AI Gateway',
@@ -24,6 +25,7 @@ export function getIntegrationStatuses(): IntegrationStatus[] {
       state: 'Подключён',
       configured: true,
       requiredVariables: [],
+      testProvider: null,
     },
     {
       name: 'DeepSeek API',
@@ -31,20 +33,23 @@ export function getIntegrationStatuses(): IntegrationStatus[] {
       state: 'Готов',
       configured: true,
       requiredVariables: [],
+      testProvider: null,
     },
     {
       name: 'Telegram Bot API',
-      detail: telegramConfigured ? 'Переменные заданы; после добавления адаптера потребуется проверить связь.' : 'Для будущего адаптера нужны токен бота и целевой чат.',
+      detail: telegramConfigured ? 'Модуль getMe/sendMessage готов; проверку связи можно запустить ниже. Интерфейс публикации ещё не подключён.' : 'Модуль getMe/sendMessage готов; добавьте токен и целевой чат для проверки связи.',
       state: telegramConfigured ? 'Параметры заданы · связь не проверена' : 'Ожидает настройки',
       configured: telegramConfigured,
       requiredVariables: ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'],
+      testProvider: 'telegram',
     },
     {
       name: 'Avito API',
-      detail: avitoConfigured ? 'OAuth-параметры заданы; после добавления адаптера потребуется проверить авторизацию.' : 'Для будущего OAuth-адаптера нужны Client ID и Client Secret.',
+      detail: avitoConfigured ? 'OAuth-модуль получает токен и проверяет профиль; публикация требует одобренных методов API и отдельного интерфейса.' : 'OAuth-модуль готов; добавьте Client ID и Client Secret для проверки профиля.',
       state: avitoConfigured ? 'Параметры заданы · связь не проверена' : 'Ожидает настройки',
       configured: avitoConfigured,
       requiredVariables: ['AVITO_CLIENT_ID', 'AVITO_CLIENT_SECRET'],
+      testProvider: 'avito',
     },
     {
       name: 'Источники поиска',
@@ -52,6 +57,7 @@ export function getIntegrationStatuses(): IntegrationStatus[] {
       state: 'Адаптеры не выбраны',
       configured: false,
       requiredVariables: [],
+      testProvider: null,
     },
   ]
 }

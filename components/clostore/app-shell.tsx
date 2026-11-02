@@ -104,7 +104,7 @@ function Sidebar({ active, onNavigate, mobile = false, onClose, reviewCount }: {
       </div>
       <div className="px-3 pt-4">
         <div className="flex items-center justify-between rounded-lg border border-white/[0.07] bg-white/[0.025] px-3 py-2.5">
-          <div className="flex items-center gap-2.5"><span className="relative flex size-2"><span className="absolute inline-flex size-full animate-ping rounded-full bg-amber-200/40" /><span className="relative inline-flex size-2 rounded-full bg-amber-200" /></span><span className="text-xs font-medium">Агент не подключён</span></div>
+          <div className="flex items-center gap-2.5"><span className="relative flex size-2"><span className="absolute inline-flex size-full animate-ping rounded-full bg-amber-200/40" /><span className="relative inline-flex size-2 rounded-full bg-amber-200" /></span><span className="text-xs font-medium">DeepSeek подключён</span></div>
           <ChevronDown className="text-muted-foreground" />
         </div>
       </div>
@@ -157,7 +157,7 @@ export function CloStoreApp({ initialData, initialAgentTasks, integrations }: { 
           <header className="sticky top-0 z-30 flex h-[64px] items-center gap-3 border-b border-white/[0.07] bg-background/95 px-4 backdrop-blur sm:px-6 lg:px-8">
             <Button className="lg:hidden" size="icon" variant="ghost" aria-label="Открыть меню" onClick={() => setMobileOpen(true)}><Menu /></Button>
             <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{sectionTitles[active]}</p><p className="hidden text-[10px] text-muted-foreground sm:block">Управление магазином · Europe/Moscow</p></div>
-            <div className="relative hidden w-full max-w-[260px] md:block"><Search className="absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" /><Input aria-label="Поиск по приложению" placeholder="Поиск по приложению" className="h-8 border-white/[0.08] bg-white/[0.025] pl-9 text-xs" onKeyDown={(event) => { if (event.key === 'Enter') navigate('search') }} /></div>
+            <div className="relative hidden w-full max-w-[260px] md:block"><Search className="absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" /><Input aria-label="Поиск по приложению" placeholder="Поиск по приложению" className="h-8 border-white/[0.08] bg-white/[0.025] pl-9 text-xs" onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.keyCode !== 229) navigate('search') }} /></div>
             <Badge variant="outline" className="hidden border-white/[0.08] bg-white/[0.025] text-[10px] text-muted-foreground xl:inline-flex"><span className="mr-1.5 size-1.5 rounded-full bg-emerald-300" />Neon подключён</Badge>
             <div className="relative">
               <Button size="icon" variant="ghost" aria-label="Уведомления" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((value) => !value)}><Bell /></Button>
