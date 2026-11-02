@@ -1,13 +1,14 @@
 "use client"
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   Activity,
   Bell,
   Bot,
   Boxes,
   ChevronDown,
-  CircleHelp,
+  LogOut,
   Command,
   CreditCard,
   FileEdit,
@@ -39,7 +40,8 @@ import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { DashboardView } from './dashboard-view'
 import { WorkspaceView } from './workspace-views'
-import type { NavigationGroup, SectionId } from './types'
+import { authClient } from '@/lib/auth-client'
+import type { NavigationGroup, SectionId, WorkspaceData } from './types'
 
 const navigation: NavigationGroup[] = [
   {
@@ -48,7 +50,7 @@ const navigation: NavigationGroup[] = [
       { id: 'dashboard', label: 'Обзор', icon: LayoutDashboard },
       { id: 'agent', label: 'AI-агент', icon: Bot },
       { id: 'search', label: 'Поиск товаров', icon: Search },
-      { id: 'review', label: 'Очередь проверки', icon: PackageCheck, count: 1 },
+      { id: 'review', label: 'Очередь проверки', icon: PackageCheck },
     ],
   },
   {
@@ -93,7 +95,7 @@ const sectionTitles: Record<SectionId, string> = {
   settings: 'Настройки',
 }
 
-function Sidebar({ active, onNavigate, mobile = false, onClose }: { active: SectionId; onNavigate: (section: SectionId) => void; mobile?: boolean; onClose?: () => void }) {
+function Sidebar({ active, onNavigate, mobile = false, onClose, user, reviewCount, onSignOut, signingOut }: { active: SectionId; onNavigate: (section: SectionId) => void; mobile?: boolean; onClose?: () => void; user: { name: string; email: string }; reviewCount: number; onSignOut: () => void; signingOut: boolean }) {
   return (
     <aside className={`flex h-full flex-col border-r border-white/[0.07] bg-[#141618] ${mobile ? 'w-[290px]' : 'w-[250px]'}`}>
       <div className="flex h-[72px] items-center justify-between border-b border-white/[0.06] px-5">
@@ -114,11 +116,11 @@ function Sidebar({ active, onNavigate, mobile = false, onClose }: { active: Sect
           <div key={group.label} className="mb-5 last:mb-0">
             <p className="mb-2 px-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground/70">{group.label}</p>
             <div className="flex flex-col gap-0.5">
-              {group.items.map(({ id, label, icon: Icon, count }) => (
+              {group.items.map(({ id, label, icon: Icon }) => (
                 <button key={id} aria-current={active === id ? 'page' : undefined} onClick={() => { onNavigate(id); onClose?.() }} className={`group flex h-9 items-center gap-3 rounded-md px-2.5 text-left text-[13px] transition-colors ${active === id ? 'bg-white/[0.08] text-foreground' : 'text-muted-foreground hover:bg-white/[0.04] hover:text-foreground'}`}>
                   <Icon className={active === id ? 'text-foreground' : 'text-muted-foreground group-hover:text-foreground'} />
                   <span className="min-w-0 flex-1 truncate">{label}</span>
-                  {count ? <span className="flex size-5 items-center justify-center rounded-full bg-white/[0.08] text-[10px] text-foreground">{count}</span> : null}
+                  {id === 'review' && reviewCount > 0 ? <span className="flex size-5 items-center justify-center rounded-full bg-white/[0.08] text-[10px] text-foreground">{reviewCount}</span> : null}
                 </button>
               ))}
             </div>
@@ -128,21 +130,23 @@ function Sidebar({ active, onNavigate, mobile = false, onClose }: { active: Sect
       <div className="px-3 pb-3">
         <div className="rounded-lg border border-white/[0.07] bg-white/[0.02] p-3">
           <div className="flex items-center gap-2 text-xs font-medium"><Sparkles className="text-muted-foreground" /> Быстрый старт</div>
-          <p className="mt-2 text-[11px] leading-4 text-muted-foreground">Подключите базу и каналы, чтобы сохранять данные.</p>
-          <button onClick={() => { onNavigate('settings'); onClose?.() }} className="mt-2 text-xs text-foreground underline decoration-white/20 underline-offset-4 hover:decoration-white/60">Открыть настройки</button>
+          <p className="mt-2 text-[11px] leading-4 text-muted-foreground">Добавьте товары и заказы, чтобы заполнить сводку.</p>
+          <button onClick={() => { onNavigate('catalog'); onClose?.() }} className="mt-2 text-xs text-foreground underline decoration-white/20 underline-offset-4 hover:decoration-white/60">Открыть каталог</button>
         </div>
       </div>
       <Separator className="bg-white/[0.06]" />
       <div className="flex items-center gap-3 px-4 py-4">
-        <div className="flex size-8 items-center justify-center rounded-full bg-[#292c30] text-xs font-medium">U</div>
-        <div className="min-w-0 flex-1"><p className="truncate text-xs font-medium">Владелец магазина</p><p className="mt-0.5 truncate text-[10px] text-muted-foreground">Локальный режим</p></div>
-        <Button size="icon-sm" variant="ghost" aria-label="Профиль"><CircleHelp /></Button>
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[#292c30] text-xs font-medium">{user.name.trim().slice(0, 1).toUpperCase() || 'U'}</div>
+        <div className="min-w-0 flex-1"><p className="truncate text-xs font-medium">{user.name || 'Аккаунт'}</p><p className="mt-0.5 truncate text-[10px] text-muted-foreground">{user.email}</p></div>
+        <Button size="icon-sm" variant="ghost" aria-label={signingOut ? 'Выполняется выход' : 'Выйти'} disabled={signingOut} onClick={onSignOut}><LogOut /></Button>
       </div>
     </aside>
   )
 }
 
-export function CloStoreApp() {
+export function CloStoreApp({ initialData, user }: { initialData: WorkspaceData; user: { name: string; email: string } }) {
+  const router = useRouter()
+  const [signingOut, setSigningOut] = useState(false)
   const [active, setActive] = useState<SectionId>('dashboard')
   const [mobileOpen, setMobileOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
@@ -153,11 +157,22 @@ export function CloStoreApp() {
     setMobileOpen(false)
   }
 
+  async function signOut() {
+    setSigningOut(true)
+    try {
+      await authClient.signOut()
+      router.replace('/sign-in')
+      router.refresh()
+    } finally {
+      setSigningOut(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="flex min-h-screen">
-        <div className="sticky top-0 hidden h-screen shrink-0 lg:block"><Sidebar active={active} onNavigate={navigate} /></div>
-        {mobileOpen && <div className="fixed inset-0 z-50 lg:hidden"><button className="absolute inset-0 bg-black/70" aria-label="Закрыть меню" onClick={() => setMobileOpen(false)} /><div className="relative h-full w-fit"><Sidebar active={active} onNavigate={navigate} mobile onClose={() => setMobileOpen(false)} /></div></div>}
+        <div className="sticky top-0 hidden h-screen shrink-0 lg:block"><Sidebar active={active} onNavigate={navigate} user={user} reviewCount={initialData.summary.reviewCount} onSignOut={signOut} signingOut={signingOut} /></div>
+        {mobileOpen && <div className="fixed inset-0 z-50 lg:hidden"><button className="absolute inset-0 bg-black/70" aria-label="Закрыть меню" onClick={() => setMobileOpen(false)} /><div className="relative h-full w-fit"><Sidebar active={active} onNavigate={navigate} mobile onClose={() => setMobileOpen(false)} user={user} reviewCount={initialData.summary.reviewCount} onSignOut={signOut} signingOut={signingOut} /></div></div>}
         <div className="min-w-0 flex-1">
           <header className="sticky top-0 z-30 flex h-[64px] items-center gap-3 border-b border-white/[0.07] bg-background/95 px-4 backdrop-blur sm:px-6 lg:px-8">
             <Button className="lg:hidden" size="icon" variant="ghost" aria-label="Открыть меню" onClick={() => setMobileOpen(true)}><Menu /></Button>
@@ -171,7 +186,7 @@ export function CloStoreApp() {
             <Button className="hidden sm:inline-flex" variant="outline" size="sm" onClick={() => setQuickActionsOpen(true)}><Command data-icon="inline-start" /> Быстрое действие</Button>
           </header>
           <main className="mx-auto w-full max-w-[1560px] px-4 py-6 sm:px-6 sm:py-7 lg:px-8">
-            {active === 'dashboard' ? <DashboardView onNavigate={navigate} /> : <WorkspaceView section={active} onNavigate={navigate} />}
+            {active === 'dashboard' ? <DashboardView data={initialData} onNavigate={navigate} /> : <WorkspaceView section={active} onNavigate={navigate} data={initialData} />}
           </main>
           <footer className="px-4 pb-5 text-center text-[10px] text-muted-foreground/60 sm:px-6">CloStore AI · рабочее пространство · ранняя версия</footer>
         </div>

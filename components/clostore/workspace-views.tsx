@@ -55,11 +55,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { calculatePricing, formatRub, type PricingInputs } from '@/lib/pricing'
 import { demoOrders, demoProducts } from './demo-data'
-import type { DemoProduct, SectionId } from './types'
+import type { DemoProduct, SectionId, WorkspaceData } from './types'
+import { LiveAnalyticsView, LiveCatalogView, LiveOrdersView, LiveReviewView, LiveSuppliersView } from './live-workspace-views'
 
 type WorkspaceViewsProps = {
   section: SectionId
   onNavigate: (section: SectionId) => void
+  data: WorkspaceData
 }
 
 function SectionHeading({ title, description, action }: { title: string; description: string; action?: React.ReactNode }) {
@@ -263,16 +265,16 @@ function AiUsageView() {
 
 function SettingsView() {
   const integrations = [
-    { name: 'Neon', detail: 'Интеграция подключена · схема БД пока не проверена', state: 'Требует проверки', connected: false },
-    { name: 'Vercel AI Gateway', detail: 'Подключён для вызовов моделей', state: 'Подключён', connected: true },
+    { name: 'Neon', detail: 'Каталог, заказы и аккаунты сохраняются в Neon', state: 'Подключён', connected: true },
+    { name: 'Vercel AI Gateway', detail: 'Доступен в проекте · генерация пока не включена', state: 'Доступен', connected: false },
     { name: 'DeepSeek API', detail: 'Ключ не настроен на сервере', state: 'Не настроен', connected: false },
     { name: 'Telegram Bot API', detail: 'Токен не задан', state: 'Не подключён', connected: false },
     { name: 'Avito API', detail: 'Авторизация не настроена', state: 'Не подключён', connected: false },
   ]
-  return <div className="space-y-5"><SectionHeading title="Настройки" description="Провайдеры, каналы продаж и правила работы приложения." /><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Подключения</CardTitle><p className="text-xs text-muted-foreground">Секреты хранятся только в серверной конфигурации</p></CardHeader><CardContent className="divide-y divide-white/[0.06]">{integrations.map((item) => <div key={item.name} className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center"><span className={`size-2 shrink-0 rounded-full ${item.connected ? 'bg-emerald-300' : item.name === 'Neon' ? 'bg-amber-200' : 'bg-white/20'}`} /><div className="min-w-0 flex-1"><p className="text-sm font-medium">{item.name}</p><p className="mt-1 text-xs text-muted-foreground">{item.detail}</p></div><Badge variant="outline" className={item.connected ? 'w-fit border-emerald-300/20 text-emerald-100' : 'w-fit border-white/10 text-muted-foreground'}>{item.state}</Badge></div>)}</CardContent></Card><div className="grid gap-4 xl:grid-cols-2"><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Ценообразование</CardTitle></CardHeader><CardContent className="space-y-3"><ResultRow label="Основная валюта" value="RUB" /><ResultRow label="Дополнительная валюта" value="CNY" /><ResultRow label="Часовой пояс" value="Europe/Moscow" /><Button variant="outline" size="sm">Изменить параметры</Button></CardContent></Card><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Безопасность</CardTitle></CardHeader><CardContent className="space-y-3 text-xs leading-5 text-muted-foreground"><p>Подключение пользовательской авторизации не настроено. Страницы аккаунтов и защищённые запросы к базе пока не создаются.</p><p>Для Neon потребуется настроить Better Auth и серверный секрет до включения сохранения данных.</p></CardContent></Card></div></div>
+  return <div className="space-y-5"><SectionHeading title="Настройки" description="Провайдеры, каналы продаж и правила работы приложения." /><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Подключения</CardTitle><p className="text-xs text-muted-foreground">Секреты хранятся только в серверной конфигурации</p></CardHeader><CardContent className="divide-y divide-white/[0.06]">{integrations.map((item) => <div key={item.name} className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center"><span className={`size-2 shrink-0 rounded-full ${item.connected ? 'bg-emerald-300' : item.name === 'Neon' ? 'bg-amber-200' : 'bg-white/20'}`} /><div className="min-w-0 flex-1"><p className="text-sm font-medium">{item.name}</p><p className="mt-1 text-xs text-muted-foreground">{item.detail}</p></div><Badge variant="outline" className={item.connected ? 'w-fit border-emerald-300/20 text-emerald-100' : 'w-fit border-white/10 text-muted-foreground'}>{item.state}</Badge></div>)}</CardContent></Card><div className="grid gap-4 xl:grid-cols-2"><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Ценообразование</CardTitle></CardHeader><CardContent className="space-y-3"><ResultRow label="Основная валюта" value="RUB" /><ResultRow label="Дополнительная валюта" value="CNY" /><ResultRow label="Часовой пояс" value="Europe/Moscow" /><Button variant="outline" size="sm">Изменить параметры</Button></CardContent></Card><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Безопасность</CardTitle></CardHeader><CardContent className="space-y-3 text-xs leading-5 text-muted-foreground"><p>Используется Better Auth с входом по email и паролю. Рабочие страницы доступны только после входа.</p><p>Запросы каталога, поставщиков и заказов ограничены идентификатором текущего аккаунта; секреты остаются на сервере.</p></CardContent></Card></div></div>
 }
 
-function PlaceholderView({ section, onNavigate }: WorkspaceViewsProps) {
+function PlaceholderView({ section, onNavigate }: Pick<WorkspaceViewsProps, 'section' | 'onNavigate'>) {
   const titles: Record<SectionId, [string, string]> = {
     dashboard: ['Обзор', 'Сводка по магазину и ближайшим задачам'], agent: ['AI-агент', 'Подготовьте задачу для агента'], search: ['Поиск товаров', 'Соберите критерии и источники'], review: ['Очередь проверки', 'Проверка карточек перед каталогом'], catalog: ['Каталог', 'Товары магазина'], editor: ['Редактор карточек', 'Подготовка описаний'], suppliers: ['Поставщики', 'Карточки продавцов'], orders: ['Заказы', 'Оплата, закупка и доставка'], avito: ['Avito', 'Публикации и объявления'], telegram: ['Telegram', 'Канал публикаций'], pricing: ['Ценообразование', 'Себестоимость и цена продажи'], analytics: ['Аналитика', 'Показатели магазина'], 'ai-usage': ['Расходы на AI', 'Фактическое потребление'], settings: ['Настройки', 'Провайдеры и параметры'],
   }
@@ -280,14 +282,15 @@ function PlaceholderView({ section, onNavigate }: WorkspaceViewsProps) {
   return <div className="space-y-5"><SectionHeading title={title} description={description} /><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardContent className="flex min-h-72 flex-col items-center justify-center text-center"><span className="flex size-12 items-center justify-center rounded-xl bg-white/[0.04] text-muted-foreground"><LoaderCircle /></span><h2 className="mt-4 text-base font-medium">Раздел подготовлен</h2><p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">Этот экран подключается к реальным данным по мере готовности backend-модулей.</p><Button className="mt-5" variant="outline" onClick={() => onNavigate('settings')}>Проверить интеграции <ArrowRight data-icon="inline-end" /></Button></CardContent></Card></div>
 }
 
-export function WorkspaceView({ section, onNavigate }: WorkspaceViewsProps) {
+export function WorkspaceView({ section, onNavigate, data }: WorkspaceViewsProps) {
   switch (section) {
+    case 'review': return <LiveReviewView data={data} />
+    case 'catalog': return <LiveCatalogView data={data} />
+    case 'orders': return <LiveOrdersView data={data} />
+    case 'suppliers': return <LiveSuppliersView data={data} />
+    case 'analytics': return <LiveAnalyticsView data={data} onNavigate={onNavigate} />
     case 'agent': return <AgentView />
     case 'search': return <SearchView />
-    case 'review': return <ReviewQueueView />
-    case 'catalog': return <CatalogView />
-    case 'orders': return <OrdersView />
-    case 'suppliers': return <SuppliersView />
     case 'pricing': return <PricingView />
     case 'avito': return <PublicationView channel="Avito" />
     case 'telegram': return <PublicationView channel="Telegram" />
