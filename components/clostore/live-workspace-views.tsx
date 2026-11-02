@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowRight, Check, Download, ExternalLink, Package, Plus, Search, Wallet } from 'lucide-react'
-import { createOrder, createProduct, createSupplier, deleteOrder, deleteProduct, exportOrdersXlsx, exportProductsXlsx, updateOrder, updateProduct, updateProductDescription, updateProductReview, updateSupplier } from '@/app/actions/workspace'
+import { createFinancialTransaction, createOrder, createProduct, createSupplier, deleteOrder, deleteProduct, exportOrdersXlsx, exportProductsXlsx, updateOrder, updateProduct, updateProductDescription, updateProductReview, updateSupplier } from '@/app/actions/workspace'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -17,16 +17,28 @@ import {
 } from '@/components/ui/dialog'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { Separator } from '@/components/ui/separator'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { formatRub } from '@/lib/pricing'
 import type { OrderStatus, SectionId, WorkspaceData, WorkspaceOrder, WorkspaceProduct, WorkspaceSupplier } from './types'
 
+const orderStatuses: OrderStatus[] = ['Ожидает оплаты', 'Ожидает закупки', 'Заказан у поставщика', 'В пути', 'Прибыл', 'Завершён', 'Отменён', 'Проблема / возврат']
+const paymentStatuses = ['Ожидает оплаты', 'Частично оплачен', 'Оплачен', 'Возврат']
+const procurementStatuses = ['Не заказан', 'Заказан у поставщика', 'Оплачен поставщику', 'Получен в Китае', 'Проблема']
+const deliveryStatuses = ['Не отправлен', 'В пути по Китаю', 'Международная доставка', 'Прибыл', 'Передан покупателю', 'Проблема']
+const expenseCategories = ['Упаковка', 'Доставка', 'Комиссии', 'Реклама', 'Подписки и сервисы', 'Прочее']
+
 const statusTone = (status: string) => {
   if (status.includes('Ожидает')) return 'border-amber-400/20 bg-amber-400/[0.07] text-amber-100'
   if (status === 'В пути' || status === 'Заказан у поставщика') return 'border-sky-400/20 bg-sky-400/[0.07] text-sky-100'
-  if (status === 'Прибыл' || status === 'Завершён' || status === 'Опубликован' || status === 'В каталоге') return 'border-emerald-400/20 bg-emerald-400/[0.07] text-emerald-100'
+  if (status === 'Прибыл' || status === 'Завершён' || status === 'Опубликован' || status === 'В каталоге' || status === 'Оплачен') return 'border-emerald-400/20 bg-emerald-400/[0.07] text-emerald-100'
+  if (status === 'Отменён' || status === 'Проблема' || status === 'Проблема / возврат') return 'border-rose-400/20 bg-rose-400/[0.07] text-rose-100'
   return 'border-white/10 text-muted-foreground'
+}
+
+function dateForInput(value: string | null) {
+  return value ? new Date(value).toISOString().slice(0, 10) : ''
 }
 
 function SectionHeading({ title, description, action }: { title: string; description: string; action?: React.ReactNode }) {
@@ -169,8 +181,16 @@ function OrderDialog({ open, onOpenChange, products }: { open: boolean; onOpenCh
             </Field>
             {!productId && <Field className="sm:col-span-2"><FieldLabel htmlFor="order-product">Название товара</FieldLabel><Input id="order-product" name="product" maxLength={180} required /></Field>}
             <Field><FieldLabel htmlFor="order-size">Размер</FieldLabel><Input id="order-size" name="size" maxLength={40} /></Field>
-            {!productId && <Field><FieldLabel htmlFor="order-price">Цена продажи, ₽</FieldLabel><Input id="order-price" name="salePrice" type="number" min="0.01" max="100000000" step="0.01" inputMode="decimal" required /></Field>}
-            {productId && <p className="text-xs text-muted-foreground sm:col-span-2">Цена и себестоимость будут взяты из карточки товара и проверены на сервере.</p>}
+            <Field><FieldLabel htmlFor="order-color">Цвет</FieldLabel><Input id="order-color" name="color" maxLength={80} /></Field>
+            <Field><FieldLabel htmlFor="order-quantity">Количество</FieldLabel><Input id="order-quantity" name="quantity" type="number" min="1" max="1000" step="1" defaultValue="1" required /></Field>
+            {!productId && <Field><FieldLabel htmlFor="order-price">Цена продажи за единицу, ₽</FieldLabel><Input id="order-price" name="salePrice" type="number" min="0.01" max="100000000" step="0.01" inputMode="decimal" required /></Field>}
+            {!productId && <Field><FieldLabel htmlFor="order-cost">Себестоимость за единицу, ₽</FieldLabel><Input id="order-cost" name="cost" type="number" min="0" max="100000000" step="0.01" inputMode="decimal" /></Field>}
+            <Field><FieldLabel htmlFor="order-supplier">Поставщик</FieldLabel><Input id="order-supplier" name="supplier" maxLength={180} /></Field>
+            <Field><FieldLabel htmlFor="order-arrival">Ожидаемое поступление</FieldLabel><Input id="order-arrival" name="expectedArrivalAt" type="date" /></Field>
+            <Field className="sm:col-span-2"><FieldLabel htmlFor="order-supplier-url">Ссылка на товар у поставщика</FieldLabel><Input id="order-supplier-url" name="supplierProductUrl" type="url" maxLength={2048} /></Field>
+            <Field className="sm:col-span-2"><FieldLabel htmlFor="order-thread-url">Ссылка на переписку с покупателем</FieldLabel><Input id="order-thread-url" name="threadUrl" type="url" maxLength={2048} /></Field>
+            <Field className="sm:col-span-2"><FieldLabel htmlFor="order-notes">Заметки по заказу</FieldLabel><Textarea id="order-notes" name="notes" maxLength={4000} rows={3} /></Field>
+            {productId && <p className="text-xs text-muted-foreground sm:col-span-2">Цена, себестоимость и поставщик будут взяты из карточки товара. Ссылки и дополнительные сведения можно указать ниже.</p>}
           </FieldGroup>
           {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
           <DialogFooter><Button type="button" variant="outline" onClick={() => { setProductId(''); onOpenChange(false) }}>Отмена</Button><Button type="submit" disabled={pending}>{pending ? 'Сохраняю…' : 'Создать заказ'}</Button></DialogFooter>
@@ -229,7 +249,7 @@ function ProductEditDialog({ product, onOpenChange }: { product: WorkspaceProduc
             <Field className="sm:col-span-2"><FieldLabel htmlFor="edit-product-description">Описание</FieldLabel><Textarea id="edit-product-description" name="description" maxLength={8000} rows={4} defaultValue={product.description} /></Field>
           </FieldGroup>
           {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-          <DialogFooter className="flex-col-reverse sm:flex-row sm:justify-between"><Button type="button" variant="outline" disabled={pending} onClick={() => { if (window.confirm(`Удалить товар «${product.name}»? Связанные заказы сохранят название товара.`)) startTransition(async () => { try { const result = await deleteProduct(product.id); if (!result.ok) throw new Error('Product not found'); onOpenChange(null); router.refresh() } catch { setError('Не удалось удалить товар.') } }) }}>Удалить товар</Button><div className="flex gap-2"><Button type="button" variant="outline" onClick={() => onOpenChange(null)}>Отмена</Button><Button type="submit" disabled={pending}>{pending ? 'Сохраняю…' : 'Сохранить изменения'}</Button></div></DialogFooter>
+          <DialogFooter className="flex-col-reverse sm:flex-row sm:justify-between"><Button type="button" variant="outline" disabled={pending} onClick={() => { if (window.confirm(`Удалить товар «${product.name}»? Св��занные заказы сохранят название товара.`)) startTransition(async () => { try { const result = await deleteProduct(product.id); if (!result.ok) throw new Error('Product not found'); onOpenChange(null); router.refresh() } catch { setError('Не удалось удалить товар.') } }) }}>Удалить товар</Button><div className="flex gap-2"><Button type="button" variant="outline" onClick={() => onOpenChange(null)}>Отмена</Button><Button type="submit" disabled={pending}>{pending ? 'Сохраняю…' : 'Сохранить изменения'}</Button></div></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
@@ -284,38 +304,46 @@ function OrderUpdateDialog({ order, onOpenChange }: { order: WorkspaceOrder | nu
 
   if (!order) return null
 
-  const statuses: OrderStatus[] = ['Ожидает оплаты', 'Ожидает закупки', 'Заказан у поставщика', 'В пути', 'Прибыл', 'Завершён']
-
   return (
     <Dialog open={Boolean(order)} onOpenChange={(open) => { if (!open) onOpenChange(null) }}>
-      <DialogContent className="border-white/10 bg-[#1b1d20] sm:max-w-lg">
+      <DialogContent className="max-h-[90vh] overflow-y-auto border-white/10 bg-[#1b1d20] sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Обновить заказ {order.id}</DialogTitle>
           <DialogDescription>Сохраните фактический статус, себестоимость и трек-номер.</DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="flex flex-col gap-5">
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="order-update-status">Статус</FieldLabel>
-              <select id="order-update-status" name="status" defaultValue={order.status} className="h-9 rounded-md border border-input bg-background px-3 text-sm">
-                {statuses.map((status) => <option key={status} value={status}>{status}</option>)}
-              </select>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="order-update-cost">Фактическая себестоимость, ₽</FieldLabel>
-              <Input id="order-update-cost" name="costRub" type="number" min="0" max="100000000" step="0.01" defaultValue={order.cost} required />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="order-update-tracking">Трек-номер</FieldLabel>
-              <Input id="order-update-tracking" name="tracking" maxLength={120} defaultValue={order.tracking ?? ''} />
-            </Field>
+          <FieldGroup className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field><FieldLabel htmlFor="order-update-customer">Покупатель</FieldLabel><Input id="order-update-customer" name="customer" maxLength={160} defaultValue={order.customer} required /></Field>
+            <Field><FieldLabel htmlFor="order-update-contact">Контакт</FieldLabel><Input id="order-update-contact" name="contact" maxLength={240} defaultValue={order.contact} required /></Field>
+            <Field className="sm:col-span-2"><FieldLabel htmlFor="order-update-product">Товар</FieldLabel><Input id="order-update-product" name="product" maxLength={180} defaultValue={order.product} required /></Field>
+            <Field><FieldLabel htmlFor="order-update-size">Размер</FieldLabel><Input id="order-update-size" name="size" maxLength={40} defaultValue={order.size} /></Field>
+            <Field><FieldLabel htmlFor="order-update-color">Цвет</FieldLabel><Input id="order-update-color" name="color" maxLength={80} defaultValue={order.color} /></Field>
+            <Field><FieldLabel htmlFor="order-update-quantity">Количество</FieldLabel><Input id="order-update-quantity" name="quantity" type="number" min="1" max="1000" step="1" defaultValue={order.quantity} required /></Field>
+            <Field><FieldLabel htmlFor="order-update-status">Статус заказа</FieldLabel><select id="order-update-status" name="status" defaultValue={order.status} className="h-9 rounded-md border border-input bg-background px-3 text-sm">{orderStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></Field>
+            <Field><FieldLabel htmlFor="order-payment-status">Оплата</FieldLabel><select id="order-payment-status" name="paymentStatus" defaultValue={order.paymentStatus} className="h-9 rounded-md border border-input bg-background px-3 text-sm">{paymentStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></Field>
+            <Field><FieldLabel htmlFor="order-procurement-status">Выкуп у поставщика</FieldLabel><select id="order-procurement-status" name="procurementStatus" defaultValue={order.procurementStatus} className="h-9 rounded-md border border-input bg-background px-3 text-sm">{procurementStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></Field>
+            <Field><FieldLabel htmlFor="order-delivery-status">Доставка</FieldLabel><select id="order-delivery-status" name="deliveryStatus" defaultValue={order.deliveryStatus} className="h-9 rounded-md border border-input bg-background px-3 text-sm">{deliveryStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></Field>
+            <Field><FieldLabel htmlFor="order-update-sale">Цена продажи за единицу, ₽</FieldLabel><Input id="order-update-sale" name="salePrice" type="number" min="0.01" max="100000000" step="0.01" defaultValue={order.salePrice} required /></Field>
+            <Field><FieldLabel htmlFor="order-update-cost">Себестоимость за единицу, ₽</FieldLabel><Input id="order-update-cost" name="costRub" type="number" min="0" max="100000000" step="0.01" defaultValue={order.cost} required /></Field>
+            <Field><FieldLabel htmlFor="order-update-supplier">Поставщик</FieldLabel><Input id="order-update-supplier" name="supplier" maxLength={180} defaultValue={order.supplier === '—' ? '' : order.supplier} /></Field>
+            <Field><FieldLabel htmlFor="order-update-arrival">Ожидаемое поступление</FieldLabel><Input id="order-update-arrival" name="expectedArrivalAt" type="date" defaultValue={dateForInput(order.expectedArrivalAt)} /></Field>
+            <Field><FieldLabel htmlFor="order-update-tracking">Трек-номер</FieldLabel><Input id="order-update-tracking" name="tracking" maxLength={120} defaultValue={order.tracking ?? ''} /></Field>
+            <Field><FieldLabel htmlFor="order-update-supplier-url">Ссылка на товар у поставщика</FieldLabel><Input id="order-update-supplier-url" name="supplierProductUrl" type="url" maxLength={2048} defaultValue={order.supplierProductUrl ?? ''} /></Field>
+            <Field className="sm:col-span-2"><FieldLabel htmlFor="order-update-thread-url">Переписка с покупателем</FieldLabel><Input id="order-update-thread-url" name="threadUrl" type="url" maxLength={2048} defaultValue={order.threadUrl ?? ''} /></Field>
+            <Field className="sm:col-span-2"><FieldLabel htmlFor="order-update-notes">Заметки</FieldLabel><Textarea id="order-update-notes" name="notes" maxLength={4000} rows={3} defaultValue={order.notes} /></Field>
+            <Field className="sm:col-span-2"><FieldLabel htmlFor="order-history-note">Комментарий к изменению статуса</FieldLabel><Input id="order-history-note" name="historyNote" maxLength={800} placeholder="Например, поставщик подтвердил отправку" /></Field>
           </FieldGroup>
           {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-          <DialogFooter>
+          <DialogFooter className="flex-col-reverse sm:flex-row sm:justify-between">
             <Button type="button" variant="outline" disabled={pending} onClick={() => { if (window.confirm(`Удалить заказ ${order.id}?`)) startTransition(async () => { try { const result = await deleteOrder(order.recordId); if (!result.ok) throw new Error('Order not found'); onOpenChange(null); router.refresh() } catch { setError('Не удалось удалить заказ.') } }) }}>Удалить заказ</Button>
             <div className="flex gap-2"><Button type="button" variant="outline" onClick={() => onOpenChange(null)}>Отмена</Button><Button type="submit" disabled={pending}>{pending ? 'Сохраняю…' : 'Сохранить изменения'}</Button></div>
           </DialogFooter>
         </form>
+        <Separator />
+        <section aria-labelledby="order-status-history-title" className="pt-1">
+          <h3 id="order-status-history-title" className="text-sm font-medium">История изменений</h3>
+          {order.history.length ? <ol className="mt-3 max-h-40 space-y-3 overflow-y-auto">{order.history.map((item) => <li key={item.id} className="border-l border-white/10 pl-3 text-xs"><p className="font-medium">{item.field}: {item.previousValue || '—'} → {item.newValue}</p><p className="mt-1 text-muted-foreground">{new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(item.createdAt))}{item.note ? ` · ${item.note}` : ''}</p></li>)}</ol> : <p className="mt-2 text-xs text-muted-foreground">Изменений пока нет.</p>}
+        </section>
       </DialogContent>
     </Dialog>
   )
@@ -327,17 +355,17 @@ export function LiveOrdersView({ data }: { data: WorkspaceData }) {
   const [statusFilter, setStatusFilter] = useState('all')
   const [editingOrder, setEditingOrder] = useState<WorkspaceOrder | null>(null)
   const filtered = useMemo(() => data.orders.filter((order) => {
-    const matchesSearch = `${order.id} ${order.customer} ${order.contact} ${order.product}`.toLowerCase().includes(search.toLowerCase())
+    const matchesSearch = `${order.id} ${order.customer} ${order.contact} ${order.product} ${order.supplier}`.toLowerCase().includes(search.toLowerCase())
     return matchesSearch && (statusFilter === 'all' || order.status === statusFilter)
   }), [data.orders, search, statusFilter])
 
   return (
     <div className="flex flex-col gap-5">
-      <SectionHeading title="Заказы" description="Заказы из вашей базы с поиском и фильтром по статусу." action={<Button onClick={() => setOpen(true)}><Plus data-icon="inline-start" /> Новый заказ</Button>} />
+      <SectionHeading title="Заказы" description="Управляйте заказами, этапами выкупа и доставки, оплатой и историей изменений." action={<Button onClick={() => setOpen(true)}><Plus data-icon="inline-start" /> Новый заказ</Button>} />
       <Card className="border-white/[0.07] bg-card/80 shadow-none">
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><CardTitle>Все заказы <span className="ml-2 text-sm font-normal text-muted-foreground">{data.summary.orderCount}</span></CardTitle><div className="flex flex-col gap-2 sm:flex-row"><Input aria-label="Поиск заказов" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Покупатель, товар, ID" className="sm:w-56" /><select aria-label="Фильтр по статусу" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3 text-sm"><option value="all">Все статусы</option>{(['Ожидает оплаты', 'Ожидает закупки', 'Заказан у поставщика', 'В пути', 'Прибыл', 'Завершён'] as OrderStatus[]).map((status) => <option key={status} value={status}>{status}</option>)}</select><ExportXlsxButton action={exportOrdersXlsx} filename="clostore-orders.xlsx" /></div></CardHeader>
-        <CardContent className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>ID / дата</TableHead><TableHead>Покупатель</TableHead><TableHead>Товар</TableHead><TableHead>Статус</TableHead><TableHead>Продажа</TableHead><TableHead>Себестоимость</TableHead><TableHead>Прибыль</TableHead><TableHead>Трек</TableHead></TableRow></TableHeader>
-          <TableBody>{filtered.length ? filtered.map((order) => <TableRow key={order.id}><TableCell><span className="font-mono text-xs">{order.id}</span><span className="mt-1 block text-xs text-muted-foreground">{order.createdAt}</span></TableCell><TableCell><span className="font-medium">{order.customer}</span><span className="mt-1 block text-xs text-muted-foreground">{order.contact}</span></TableCell><TableCell>{order.product}{order.size && <span className="mt-1 block text-xs text-muted-foreground">Размер {order.size}</span>}</TableCell><TableCell><Badge variant="outline" className={statusTone(order.status)}>{order.status}</Badge></TableCell><TableCell>{formatRub(order.salePrice)}</TableCell><TableCell>{order.cost ? formatRub(order.cost) : '—'}</TableCell><TableCell>{order.cost ? formatRub(order.salePrice - order.cost) : '—'}</TableCell><TableCell><div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center"><span>{order.tracking || '—'}</span><Button type="button" variant="outline" size="sm" onClick={() => setEditingOrder(order)}>Изменить</Button></div></TableCell></TableRow>) : <DataTableEmpty text={search || statusFilter !== 'all' ? 'Заказы не найдены.' : 'Заказов пока нет. Создайте первую запись.'} />}</TableBody>
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><CardTitle>Все заказы <span className="ml-2 text-sm font-normal text-muted-foreground">{data.summary.orderCount} · {data.summary.unitCount} шт.</span></CardTitle><div className="flex flex-col gap-2 sm:flex-row"><Input aria-label="Поиск заказов" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Покупатель, товар, ID" className="sm:w-56" /><select aria-label="Фильтр по статусу" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3 text-sm"><option value="all">Все статусы</option>{orderStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select><ExportXlsxButton action={exportOrdersXlsx} filename="clostore-orders.xlsx" /></div></CardHeader>
+        <CardContent className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>ID / дата</TableHead><TableHead>Покупатель</TableHead><TableHead>Товар / параметры</TableHead><TableHead>Статус</TableHead><TableHead>Оплата</TableHead><TableHead>Выкуп</TableHead><TableHead>Доставка</TableHead><TableHead>Продажа · всего</TableHead><TableHead>Себестоимость · всего</TableHead><TableHead>Валовая прибыль</TableHead><TableHead>Действия</TableHead></TableRow></TableHeader>
+          <TableBody>{filtered.length ? filtered.map((order) => { const orderRevenue = order.salePrice * order.quantity; const orderCost = order.cost * order.quantity; return <TableRow key={order.id}><TableCell><span className="font-mono text-xs">{order.id}</span><span className="mt-1 block text-xs text-muted-foreground">{order.createdAt}</span></TableCell><TableCell><span className="font-medium">{order.customer}</span><span className="mt-1 block text-xs text-muted-foreground">{order.contact}</span></TableCell><TableCell><span className="font-medium">{order.product}</span><span className="mt-1 block text-xs text-muted-foreground">{[order.size && `Размер ${order.size}`, order.color && `Цвет ${order.color}`, `${order.quantity} шт.`].filter(Boolean).join(' · ')}</span></TableCell><TableCell><Badge variant="outline" className={statusTone(order.status)}>{order.status}</Badge></TableCell><TableCell><Badge variant="outline" className={statusTone(order.paymentStatus)}>{order.paymentStatus}</Badge></TableCell><TableCell>{order.procurementStatus}</TableCell><TableCell>{order.deliveryStatus}</TableCell><TableCell className="whitespace-nowrap">{formatRub(orderRevenue)}<span className="mt-1 block text-xs text-muted-foreground">{formatRub(order.salePrice)} / шт.</span></TableCell><TableCell className="whitespace-nowrap">{formatRub(orderCost)}</TableCell><TableCell className="whitespace-nowrap">{formatRub(orderRevenue - orderCost)}</TableCell><TableCell><div className="flex flex-col items-start gap-2"><div className="flex gap-2">{order.tracking && <span className="text-xs text-muted-foreground">{order.tracking}</span>}{order.threadUrl && <a href={order.threadUrl} target="_blank" rel="noreferrer" className="text-xs underline underline-offset-4">Переписка</a>}</div><Button type="button" variant="outline" size="sm" onClick={() => setEditingOrder(order)}>Изменить</Button></div></TableCell></TableRow> }) : <DataTableEmpty colSpan={11} text={search || statusFilter !== 'all' ? 'Заказы не найдены.' : 'Заказов пока нет. Создайте первую запись.'} />}</TableBody>
         </Table></CardContent>
       </Card>
       <OrderDialog open={open} onOpenChange={setOpen} products={data.products} />
@@ -504,18 +532,45 @@ export function LiveSuppliersView({ data }: { data: WorkspaceData }) {
   const [open, setOpen] = useState(false)
   const [editingSupplier, setEditingSupplier] = useState<WorkspaceSupplier | null>(null)
 
-  return <div className="flex flex-col gap-5"><SectionHeading title="Поставщики" description="Управляйте сохранёнными источниками и их статусом." action={<Button onClick={() => setOpen(true)}><Plus data-icon="inline-start" /> Добавить поставщика</Button>} /><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Список поставщиков <span className="ml-2 text-sm font-normal text-muted-foreground">{data.suppliers.length}</span></CardTitle></CardHeader><CardContent className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Поставщик</TableHead><TableHead>Площадка</TableHead><TableHead>Магазин</TableHead><TableHead>Товары</TableHead><TableHead>Статус</TableHead><TableHead><span className="sr-only">Действия</span></TableHead></TableRow></TableHeader><TableBody>{data.suppliers.length ? data.suppliers.map((supplier) => <TableRow key={supplier.id}><TableCell><span className="font-medium">{supplier.name}</span>{supplier.notes && <span className="mt-1 block max-w-xs truncate text-xs text-muted-foreground">{supplier.notes}</span>}</TableCell><TableCell>{supplier.platform}</TableCell><TableCell>{supplier.storeUrl ? <a href={supplier.storeUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm underline underline-offset-4">Открыть <ExternalLink aria-hidden="true" /></a> : '—'}</TableCell><TableCell>{supplier.productCount}</TableCell><TableCell><Badge variant="outline" className={statusTone(supplier.status === 'active' ? 'Активен' : supplier.status)}>{supplier.status === 'active' ? 'Активен' : 'Архивный'}</Badge></TableCell><TableCell><Button type="button" size="sm" variant="ghost" onClick={() => setEditingSupplier(supplier)}>Изменить</Button></TableCell></TableRow>) : <DataTableEmpty colSpan={6} text="Поставщики появятся после добавления товара с поставщиком." />}</TableBody></Table></CardContent></Card><SupplierDialog open={open} onOpenChange={setOpen} /><SupplierEditDialog supplier={editingSupplier} onOpenChange={setEditingSupplier} /></div>
+  return <div className="flex flex-col gap-5"><SectionHeading title="Поставщики" description="Управляйте сохранённы��и источниками и их статусом." action={<Button onClick={() => setOpen(true)}><Plus data-icon="inline-start" /> Добавить поставщика</Button>} /><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Список поставщиков <span className="ml-2 text-sm font-normal text-muted-foreground">{data.suppliers.length}</span></CardTitle></CardHeader><CardContent className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Поставщик</TableHead><TableHead>Площадка</TableHead><TableHead>Магазин</TableHead><TableHead>Товары</TableHead><TableHead>Статус</TableHead><TableHead><span className="sr-only">Действия</span></TableHead></TableRow></TableHeader><TableBody>{data.suppliers.length ? data.suppliers.map((supplier) => <TableRow key={supplier.id}><TableCell><span className="font-medium">{supplier.name}</span>{supplier.notes && <span className="mt-1 block max-w-xs truncate text-xs text-muted-foreground">{supplier.notes}</span>}</TableCell><TableCell>{supplier.platform}</TableCell><TableCell>{supplier.storeUrl ? <a href={supplier.storeUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm underline underline-offset-4">Открыть <ExternalLink aria-hidden="true" /></a> : '—'}</TableCell><TableCell>{supplier.productCount}</TableCell><TableCell><Badge variant="outline" className={statusTone(supplier.status === 'active' ? 'Активен' : supplier.status)}>{supplier.status === 'active' ? 'Активен' : 'Архивный'}</Badge></TableCell><TableCell><Button type="button" size="sm" variant="ghost" onClick={() => setEditingSupplier(supplier)}>Изменить</Button></TableCell></TableRow>) : <DataTableEmpty colSpan={6} text="Поставщики появятся после добавления товара с поставщиком." />}</TableBody></Table></CardContent></Card><SupplierDialog open={open} onOpenChange={setOpen} /><SupplierEditDialog supplier={editingSupplier} onOpenChange={setEditingSupplier} /></div>
+}
+
+function ExpenseDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const router = useRouter()
+  const [pending, startTransition] = useTransition()
+  const [error, setError] = useState('')
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const form = event.currentTarget
+    const payload = new FormData(form)
+    setError('')
+    startTransition(async () => {
+      try {
+        await createFinancialTransaction(payload)
+        form.reset()
+        onOpenChange(false)
+        router.refresh()
+      } catch {
+        setError('Не удалось сохранить расход. Проверьте поля и попробуйте ещё раз.')
+      }
+    })
+  }
+
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="border-white/10 bg-[#1b1d20] sm:max-w-lg"><DialogHeader><DialogTitle>Добавить расход</DialogTitle><DialogDescription>Расход попадёт в финансовый журнал и расчёт чистой прибыли.</DialogDescription></DialogHeader><form onSubmit={submit} className="flex flex-col gap-5"><FieldGroup><Field><FieldLabel htmlFor="expense-category">Категория</FieldLabel><select id="expense-category" name="category" className="h-9 rounded-md border border-input bg-background px-3 text-sm" defaultValue="Доставка">{expenseCategories.map((category) => <option key={category} value={category}>{category}</option>)}</select></Field><Field><FieldLabel htmlFor="expense-amount">Сумма, ₽</FieldLabel><Input id="expense-amount" name="amountRub" type="number" min="0.01" max="100000000" step="0.01" required /></Field><Field><FieldLabel htmlFor="expense-date">Дата расхода</FieldLabel><Input id="expense-date" name="occurredAt" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /></Field><Field><FieldLabel htmlFor="expense-notes">Комментарий</FieldLabel><Textarea id="expense-notes" name="notes" maxLength={1000} rows={3} /></Field></FieldGroup>{error && <p role="alert" className="text-sm text-destructive">{error}</p>}<DialogFooter><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button><Button type="submit" disabled={pending}>{pending ? 'Сохраняю…' : 'Сохранить расход'}</Button></DialogFooter></form></DialogContent></Dialog>
 }
 
 export function LiveAnalyticsView({ data, onNavigate }: { data: WorkspaceData; onNavigate: (section: SectionId) => void }) {
-  const profit = data.summary.revenue - data.summary.cost
+  const [expenseDialogOpen, setExpenseDialogOpen] = useState(false)
   const averageCheck = data.summary.orderCount ? data.summary.revenue / data.summary.orderCount : 0
   const metrics = [
-    { label: 'Выручка', value: formatRub(data.summary.revenue), icon: Wallet },
-    { label: 'Прибыль', value: formatRub(profit), icon: Package },
-    { label: 'Заказы', value: String(data.summary.orderCount), icon: Package },
+    { label: 'Сумма заказов', value: formatRub(data.summary.revenue), icon: Wallet },
+    { label: 'Валовая прибыль', value: formatRub(data.summary.grossProfit), icon: Package },
+    { label: 'Дополнительные расходы', value: formatRub(data.summary.additionalExpenses), icon: ArrowRight },
+    { label: 'Чистая прибыль', value: formatRub(data.summary.netProfit), icon: Wallet },
+    { label: 'Заказы · единицы', value: `${data.summary.orderCount} · ${data.summary.unitCount}`, icon: Package },
     { label: 'Средний чек', value: data.summary.orderCount ? formatRub(averageCheck) : '—', icon: ArrowRight },
   ]
 
-  return <div className="flex flex-col gap-5"><SectionHeading title="Аналитика" description="Показатели рассчитаны по заказам, сохранённым в Neon." action={<Button variant="outline" onClick={() => onNavigate('orders')}>Открыть заказы <ArrowRight data-icon="inline-end" /></Button>} /><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(({ label, value, icon: Icon }) => <Card key={label} className="border-white/[0.07] bg-card/80 shadow-none"><CardContent className="flex items-center justify-between gap-4 p-4"><div><p className="text-sm text-muted-foreground">{label}</p><p className="mt-2 text-xl font-semibold tabular-nums">{value}</p></div><Icon className="text-muted-foreground" /></CardContent></Card>)}</div><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>История продаж</CardTitle><p className="text-xs text-muted-foreground">Продажи и расчётная прибыль за последние шесть месяцев.</p></CardHeader><CardContent>{data.summary.orderCount ? <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">{data.revenueTrend.map((item) => <div key={item.month} className="rounded-lg border border-white/[0.06] p-3"><p className="text-xs capitalize text-muted-foreground">{item.month}</p><p className="mt-2 text-sm font-medium">{formatRub(item.revenue)}</p><p className="mt-1 text-xs text-muted-foreground">прибыль {formatRub(item.profit)}</p></div>)}</div> : <div className="flex min-h-40 flex-col items-center justify-center text-center"><p className="text-sm font-medium">Пока нет сохранённых продаж</p><p className="mt-1 text-xs text-muted-foreground">После добавления заказов здесь появится история.</p><Button variant="outline" size="sm" className="mt-4" onClick={() => onNavigate('orders')}>Создать заказ</Button></div>}</CardContent></Card></div>
+  return <div className="flex flex-col gap-5"><SectionHeading title="Финансы и аналитика" description="Продажи рассчитаны по всем сохранённым заказам; дополнительные расходы учитываются отдельно." action={<div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => onNavigate('orders')}>Открыть заказы <ArrowRight data-icon="inline-end" /></Button><Button onClick={() => setExpenseDialogOpen(true)}><Plus data-icon="inline-start" /> Добавить расход</Button></div>} /><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{metrics.map(({ label, value, icon: Icon }) => <Card key={label} className="border-white/[0.07] bg-card/80 shadow-none"><CardContent className="flex items-center justify-between gap-4 p-4"><div><p className="text-sm text-muted-foreground">{label}</p><p className="mt-2 text-xl font-semibold tabular-nums">{value}</p></div><Icon aria-hidden="true" className="text-muted-foreground" /></CardContent></Card>)}</div><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Динамика за шесть месяцев</CardTitle><p className="text-xs text-muted-foreground">Валовая прибыль = сумма заказов минус себестоимость; чистая прибыль также учитывает журнал расходов.</p></CardHeader><CardContent><div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">{data.revenueTrend.map((item) => <div key={item.month} className="rounded-lg border border-white/[0.06] p-3"><p className="text-xs capitalize text-muted-foreground">{item.month}</p><p className="mt-2 text-sm font-medium">Заказы {formatRub(item.revenue)}</p><p className="mt-1 text-xs text-muted-foreground">Валовая прибыль {formatRub(item.grossProfit)}</p><p className="mt-1 text-xs text-muted-foreground">Расходы {formatRub(item.expenses)}</p><p className="mt-1 text-xs font-medium">Чистая прибыль {formatRub(item.profit)}</p></div>)}</div></CardContent></Card><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Журнал расходов <span className="ml-2 text-sm font-normal text-muted-foreground">{data.transactions.length}</span></CardTitle><p className="text-xs text-muted-foreground">Последние 100 операций. Расходы не смешиваются с себестоимостью товара.</p></CardHeader><CardContent className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Дата</TableHead><TableHead>Категория</TableHead><TableHead>Комментарий</TableHead><TableHead className="text-right">Сумма</TableHead></TableRow></TableHeader><TableBody>{data.transactions.length ? data.transactions.map((transaction) => <TableRow key={transaction.id}><TableCell className="whitespace-nowrap">{transaction.occurredAt}</TableCell><TableCell>{transaction.category}</TableCell><TableCell className="max-w-sm truncate">{transaction.notes || '—'}</TableCell><TableCell className="text-right font-medium">{formatRub(transaction.amountRub)}</TableCell></TableRow>) : <DataTableEmpty colSpan={4} text="Расходов пока нет. Добавьте упаковку, доставку, комиссию или другой расход." />}</TableBody></Table></CardContent></Card><ExpenseDialog open={expenseDialogOpen} onOpenChange={setExpenseDialogOpen} /></div>
 }

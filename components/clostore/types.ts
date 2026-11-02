@@ -30,6 +30,8 @@ export type OrderStatus =
   | 'В пути'
   | 'Прибыл'
   | 'Завершён'
+  | 'Отменён'
+  | 'Проблема / возврат'
 
 export type DemoOrder = {
   id: string
@@ -68,12 +70,39 @@ export type WorkspaceOrder = {
   contact: string
   product: string
   size: string
+  color: string
+  quantity: number
   createdAt: string
   status: OrderStatus
+  paymentStatus: string
+  procurementStatus: string
+  deliveryStatus: string
   salePrice: number
   cost: number
   supplier: string
+  supplierProductUrl: string | null
+  threadUrl: string | null
+  expectedArrivalAt: string | null
+  notes: string
   tracking?: string
+  history: OrderStatusChange[]
+}
+
+export type OrderStatusChange = {
+  id: string
+  field: string
+  previousValue: string
+  newValue: string
+  note: string
+  createdAt: string
+}
+
+export type FinancialTransaction = {
+  id: string
+  category: string
+  amountRub: number
+  notes: string
+  occurredAt: string
 }
 
 export type WorkspaceProduct = {
@@ -142,12 +171,17 @@ export type WorkspaceData = {
   orders: WorkspaceOrder[]
   products: WorkspaceProduct[]
   suppliers: WorkspaceSupplier[]
-  revenueTrend: { month: string; revenue: number; profit: number }[]
+  transactions: FinancialTransaction[]
+  revenueTrend: { month: string; revenue: number; grossProfit: number; expenses: number; profit: number }[]
   summary: {
     orderCount: number
     activeOrderCount: number
+    unitCount: number
     revenue: number
     cost: number
+    grossProfit: number
+    additionalExpenses: number
+    netProfit: number
     reviewCount: number
     publishedCount: number
   }

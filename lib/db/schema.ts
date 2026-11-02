@@ -113,11 +113,41 @@ export const orders = pgTable('orders', {
   customerContact: text('customerContact').notNull(),
   productName: text('productName').notNull(),
   size: text('size').notNull().default(''),
+  color: text('color').notNull().default(''),
+  quantity: integer('quantity').notNull().default(1),
   status: text('status').notNull().default('Ожидает оплаты'),
+  paymentStatus: text('paymentStatus').notNull().default('Ожидает оплаты'),
+  procurementStatus: text('procurementStatus').notNull().default('Не заказан'),
+  deliveryStatus: text('deliveryStatus').notNull().default('Не отправлен'),
   salePriceRub: numeric('salePriceRub', { precision: 12, scale: 2 }).notNull(),
   costRub: numeric('costRub', { precision: 12, scale: 2 }).notNull().default('0'),
   supplierName: text('supplierName').notNull().default(''),
+  supplierProductUrl: text('supplierProductUrl'),
+  threadUrl: text('threadUrl'),
   tracking: text('tracking'),
+  expectedArrivalAt: timestamp('expectedArrivalAt'),
+  notes: text('notes').notNull().default(''),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
   updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 }, (table) => [index('orders_user_created_idx').on(table.userId, table.createdAt)])
+
+export const orderStatusHistory = pgTable('order_status_history', {
+  id: text('id').primaryKey(),
+  userId: text('userId').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  orderId: text('orderId').notNull().references(() => orders.id, { onDelete: 'cascade' }),
+  field: text('field').notNull(),
+  previousValue: text('previousValue').notNull().default(''),
+  newValue: text('newValue').notNull(),
+  note: text('note').notNull().default(''),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+}, (table) => [index('order_status_history_user_order_created_idx').on(table.userId, table.orderId, table.createdAt)])
+
+export const financialTransactions = pgTable('financial_transactions', {
+  id: text('id').primaryKey(),
+  userId: text('userId').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  category: text('category').notNull(),
+  amountRub: numeric('amountRub', { precision: 12, scale: 2 }).notNull(),
+  notes: text('notes').notNull().default(''),
+  occurredAt: timestamp('occurredAt').notNull().defaultNow(),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+}, (table) => [index('financial_transactions_user_occurred_idx').on(table.userId, table.occurredAt)])
