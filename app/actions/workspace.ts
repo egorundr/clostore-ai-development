@@ -123,3 +123,23 @@ export async function createOrder(formData: FormData) {
   revalidatePath('/')
   return { ok: true }
 }
+
+export async function updateOrder(orderId: string, formData: FormData) {
+  const userId = await getUserId()
+  if (typeof orderId !== 'string' || orderId.length > 64) throw new Error('Invalid input')
+
+  const status = readText(formData, 'status', 40, true)
+  const validStatuses = ['Ожидает оплаты', 'Ожидает закупки', 'Заказан у поставщика', 'В пути', 'Прибыл', 'Завершён']
+  if (!validStatuses.includes(status)) throw new Error('Invalid input')
+
+  const costRub = readAmount(formData, 'costRub', true)
+  const tracking = readText(formData, 'tracking', 120)
+  const [updated] = await db.update(orders)
+    .set({ status, costRub: String(costRub), tracking: tracking || null, updatedAt: new Date() })
+    .where(and(eq(orders.id, orderId), eq(orders.userId, userId)))
+    .returning({ id: orders.id })
+
+  if (!updated) return { ok: false }
+  revalidatePath('/')
+  return { ok: true }
+}

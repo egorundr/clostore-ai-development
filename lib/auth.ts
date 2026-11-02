@@ -40,6 +40,7 @@ export const auth = betterAuth({
   trustedOrigins: process.env.NODE_ENV === 'development' ? developmentOrigins : productionOrigins,
   emailAndPassword: {
     enabled: true,
+    disableSignUp: true,
     minPasswordLength: 12,
     maxPasswordLength: 128,
   },

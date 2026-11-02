@@ -63,6 +63,7 @@ export type NavigationGroup = {
 
 export type WorkspaceOrder = {
   id: string
+  recordId: string
   customer: string
   contact: string
   product: string

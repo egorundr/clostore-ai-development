@@ -96,6 +96,7 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
   return {
     orders: orderRows.map((order) => ({
       id: `CS-${order.id.slice(0, 8).toUpperCase()}`,
+      recordId: order.id,
       customer: order.customerName,
       contact: order.customerContact,
       product: order.productName,

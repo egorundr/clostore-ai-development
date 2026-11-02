@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowRight, Check, Package, Plus, Search, Wallet } from 'lucide-react'
-import { createOrder, createProduct, updateProductReview } from '@/app/actions/workspace'
+import { createOrder, createProduct, updateOrder, updateProductReview } from '@/app/actions/workspace'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -19,7 +19,7 @@ import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { formatRub } from '@/lib/pricing'
-import type { OrderStatus, SectionId, WorkspaceData, WorkspaceProduct } from './types'
+import type { OrderStatus, SectionId, WorkspaceData, WorkspaceOrder, WorkspaceProduct } from './types'
 
 const statusTone = (status: string) => {
   if (status.includes('Ожидает')) return 'border-amber-400/20 bg-amber-400/[0.07] text-amber-100'
@@ -157,10 +157,73 @@ export function LiveCatalogView({ data }: { data: WorkspaceData }) {
   )
 }
 
+function OrderUpdateDialog({ order, onOpenChange }: { order: WorkspaceOrder | null; onOpenChange: (order: WorkspaceOrder | null) => void }) {
+  const router = useRouter()
+  const [pending, startTransition] = useTransition()
+  const [error, setError] = useState('')
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!order) return
+
+    const payload = new FormData(event.currentTarget)
+    setError('')
+    startTransition(async () => {
+      try {
+        const result = await updateOrder(order.recordId, payload)
+        if (!result.ok) throw new Error('Order not found')
+        onOpenChange(null)
+        router.refresh()
+      } catch {
+        setError('Не удалось обновить заказ. Проверьте поля и попробуйте ещё раз.')
+      }
+    })
+  }
+
+  if (!order) return null
+
+  const statuses: OrderStatus[] = ['Ожидает оплаты', 'Ожидает закупки', 'Заказан у поставщика', 'В пути', 'Прибыл', 'Завершён']
+
+  return (
+    <Dialog open={Boolean(order)} onOpenChange={(open) => { if (!open) onOpenChange(null) }}>
+      <DialogContent className="border-white/10 bg-[#1b1d20] sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Обновить заказ {order.id}</DialogTitle>
+          <DialogDescription>Сохраните фактический статус, себестоимость и трек-номер.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="flex flex-col gap-5">
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="order-update-status">Статус</FieldLabel>
+              <select id="order-update-status" name="status" defaultValue={order.status} className="h-9 rounded-md border border-input bg-background px-3 text-sm">
+                {statuses.map((status) => <option key={status} value={status}>{status}</option>)}
+              </select>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="order-update-cost">Фактическая себестоимость, ₽</FieldLabel>
+              <Input id="order-update-cost" name="costRub" type="number" min="0" max="100000000" step="0.01" defaultValue={order.cost} required />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="order-update-tracking">Трек-номер</FieldLabel>
+              <Input id="order-update-tracking" name="tracking" maxLength={120} defaultValue={order.tracking ?? ''} />
+            </Field>
+          </FieldGroup>
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(null)}>Отмена</Button>
+            <Button type="submit" disabled={pending}>{pending ? 'Сохраняю…' : 'Сохранить изменения'}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 export function LiveOrdersView({ data }: { data: WorkspaceData }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [editingOrder, setEditingOrder] = useState<WorkspaceOrder | null>(null)
   const filtered = useMemo(() => data.orders.filter((order) => {
     const matchesSearch = `${order.id} ${order.customer} ${order.contact} ${order.product}`.toLowerCase().includes(search.toLowerCase())
     return matchesSearch && (statusFilter === 'all' || order.status === statusFilter)
@@ -172,10 +235,11 @@ export function LiveOrdersView({ data }: { data: WorkspaceData }) {
       <Card className="border-white/[0.07] bg-card/80 shadow-none">
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><CardTitle>Все заказы <span className="ml-2 text-sm font-normal text-muted-foreground">{data.summary.orderCount}</span></CardTitle><div className="flex flex-col gap-2 sm:flex-row"><Input aria-label="Поиск заказов" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Покупатель, товар, ID" className="sm:w-56" /><select aria-label="Фильтр по статусу" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3 text-sm"><option value="all">Все статусы</option>{(['Ожидает оплаты', 'Ожидает закупки', 'Заказан у поставщика', 'В пути', 'Прибыл', 'Завершён'] as OrderStatus[]).map((status) => <option key={status} value={status}>{status}</option>)}</select></div></CardHeader>
         <CardContent className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>ID / дата</TableHead><TableHead>Покупатель</TableHead><TableHead>Товар</TableHead><TableHead>Статус</TableHead><TableHead>Продажа</TableHead><TableHead>Себестоимость</TableHead><TableHead>Прибыль</TableHead><TableHead>Трек</TableHead></TableRow></TableHeader>
-          <TableBody>{filtered.length ? filtered.map((order) => <TableRow key={order.id}><TableCell><span className="font-mono text-xs">{order.id}</span><span className="mt-1 block text-xs text-muted-foreground">{order.createdAt}</span></TableCell><TableCell><span className="font-medium">{order.customer}</span><span className="mt-1 block text-xs text-muted-foreground">{order.contact}</span></TableCell><TableCell>{order.product}{order.size && <span className="mt-1 block text-xs text-muted-foreground">Размер {order.size}</span>}</TableCell><TableCell><Badge variant="outline" className={statusTone(order.status)}>{order.status}</Badge></TableCell><TableCell>{formatRub(order.salePrice)}</TableCell><TableCell>{order.cost ? formatRub(order.cost) : '—'}</TableCell><TableCell>{order.cost ? formatRub(order.salePrice - order.cost) : '—'}</TableCell><TableCell>{order.tracking || '—'}</TableCell></TableRow>) : <DataTableEmpty text={search || statusFilter !== 'all' ? 'Заказы не найдены.' : 'Заказов пока нет. Создайте первую запись.'} />}</TableBody>
+          <TableBody>{filtered.length ? filtered.map((order) => <TableRow key={order.id}><TableCell><span className="font-mono text-xs">{order.id}</span><span className="mt-1 block text-xs text-muted-foreground">{order.createdAt}</span></TableCell><TableCell><span className="font-medium">{order.customer}</span><span className="mt-1 block text-xs text-muted-foreground">{order.contact}</span></TableCell><TableCell>{order.product}{order.size && <span className="mt-1 block text-xs text-muted-foreground">Размер {order.size}</span>}</TableCell><TableCell><Badge variant="outline" className={statusTone(order.status)}>{order.status}</Badge></TableCell><TableCell>{formatRub(order.salePrice)}</TableCell><TableCell>{order.cost ? formatRub(order.cost) : '—'}</TableCell><TableCell>{order.cost ? formatRub(order.salePrice - order.cost) : '—'}</TableCell><TableCell><div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center"><span>{order.tracking || '—'}</span><Button type="button" variant="outline" size="sm" onClick={() => setEditingOrder(order)}>Изменить</Button></div></TableCell></TableRow>) : <DataTableEmpty text={search || statusFilter !== 'all' ? 'Заказы не найдены.' : 'Заказов пока нет. Создайте первую запись.'} />}</TableBody>
         </Table></CardContent>
       </Card>
       <OrderDialog open={open} onOpenChange={setOpen} />
+      <OrderUpdateDialog order={editingOrder} onOpenChange={setEditingOrder} />
     </div>
   )
 }

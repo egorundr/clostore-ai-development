@@ -9,7 +9,7 @@ export default async function SignInPage() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-4 py-10 text-foreground">
-      <AuthForm mode="sign-in" />
+      <AuthForm />
     </main>
   )
 }
