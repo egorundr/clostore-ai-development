@@ -67,6 +67,7 @@ import { publishTelegramPublication, saveTelegramPublication, testTelegramConnec
 import { saveProductSearch, updateProductPricing } from '@/app/actions/workspace'
 import { calculatePricing, formatRub, type PricingInputs } from '@/lib/pricing'
 import { demoOrders, demoProducts } from './demo-data'
+import { ImageUploadField } from './image-upload-field'
 import type { AgentTaskPreview, AgentUsageSummary, DemoProduct, IntegrationStatus, SavedProductSearch, SectionId, WorkspaceData, WorkspacePublication } from './types'
 import { LiveAnalyticsView, LiveCatalogView, LiveEditorView, LiveOrdersView, LiveReviewView, LiveSuppliersView } from './live-workspace-views'
 
@@ -734,9 +735,8 @@ function PublicationView({ data }: { data: WorkspaceData }) {
               <Field><FieldLabel htmlFor="publication-product">Заполнить из каталога</FieldLabel><select id="publication-product" value={productId} onChange={(event) => selectProduct(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3 text-sm"><option value="">Новая публикация</option>{data.products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></Field>
               <Field><FieldLabel htmlFor="listing-title">Заголовок</FieldLabel><Input id="listing-title" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={120} required placeholder="Название модели" /></Field>
               <Field><FieldLabel htmlFor="listing-text">Описание</FieldLabel><Textarea id="listing-text" value={body} onChange={(event) => setBody(event.target.value)} maxLength={3800} className="min-h-36 resize-y" placeholder="Описание товара, материалы, размеры и условия заказа" /><p className="text-xs text-muted-foreground">До 1000 символов с фото или до 4000 без фото.</p></Field>
-              <Field><FieldLabel htmlFor="listing-images">Фото для Telegram</FieldLabel><Textarea id="listing-images" value={images} onChange={(event) => setImages(event.target.value)} maxLength={20000} rows={3} placeholder="Публичные HTTPS-ссылки, по одной на строку" /><p className="text-xs text-muted-foreground">До 10 публичных HTTPS-ссылок. Фото из выбранного товара подставляются автоматически.</p></Field>
+              <ImageUploadField id="listing-images" label="Фото для Telegram" value={imageUrls} onChange={(urls) => setImages(urls.join('\n'))} />
             </FieldGroup>
-            {imageUrls.length > 0 && <div className="flex flex-wrap gap-2" aria-label="Предпросмотр фотографий">{imageUrls.slice(0, 10).map((url) => <img key={url} src={url} alt={title ? `Фото: ${title}` : 'Фото товара'} loading="lazy" decoding="async" className="size-16 rounded-md border border-white/10 object-cover" />)}</div>}
             <div className="flex flex-wrap gap-2"><Button type="submit" variant="secondary" disabled={pending}>{pending ? 'Сохраняю…' : draftId ? 'Сохранить черновик' : 'Сохранить черновик'}</Button><Button type="button" onClick={publishDraft} disabled={pending || !draftId}>{pending ? 'Отправляю…' : 'Опубликовать'}</Button></div>
           </form>
           {notice && <p role="status" className="mt-4 text-sm text-emerald-200">{notice}</p>}

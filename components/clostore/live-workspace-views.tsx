@@ -1,9 +1,10 @@
 'use client'
 
-import { useMemo, useState, useTransition, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, useTransition, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowRight, Check, Download, ExternalLink, Package, Plus, Search, Wallet } from 'lucide-react'
 import { createFinancialTransaction, createOrder, createProduct, createSupplier, deleteOrder, deleteProduct, exportOrdersXlsx, exportProductsXlsx, updateOrder, updateProduct, updateProductDescription, updateProductReview, updateSupplier } from '@/app/actions/workspace'
+import { ImageUploadField } from '@/components/clostore/image-upload-field'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -89,6 +90,15 @@ function ProductDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState('')
+  const [images, setImages] = useState<string[]>([])
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen) {
+      setImages([])
+      setError('')
+    }
+    onOpenChange(nextOpen)
+  }
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -99,7 +109,8 @@ function ProductDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
       try {
         await createProduct(payload)
         form.reset()
-        onOpenChange(false)
+        setImages([])
+        handleOpenChange(false)
         router.refresh()
       } catch {
         setError('Не удалось сохранить товар. Проверьте поля и попробуйте ещё раз.')
@@ -108,7 +119,7 @@ function ProductDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto border-white/10 bg-[#1b1d20] sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Новый товар</DialogTitle>
@@ -121,7 +132,7 @@ function ProductDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
             <Field><FieldLabel htmlFor="product-source">Источник / площадка</FieldLabel><Input id="product-source" name="source" maxLength={120} placeholder="Например, 1688" /></Field>
             <Field><FieldLabel htmlFor="product-supplier">Поставщик</FieldLabel><Input id="product-supplier" name="supplierName" maxLength={180} /></Field>
             <Field><FieldLabel htmlFor="product-sizes">Размеры через запятую</FieldLabel><Input id="product-sizes" name="sizes" maxLength={240} placeholder="S, M, L" /></Field>
-            <Field className="sm:col-span-2"><FieldLabel htmlFor="product-images">Ссылки на фото</FieldLabel><Textarea id="product-images" name="images" maxLength={20000} rows={3} placeholder="Публичные HTTPS-ссылки, по одной на строку" /><p className="text-xs text-muted-foreground">До 10 фото; их URL используются для Telegram-публикации.</p></Field>
+            <ImageUploadField id="product-images" name="images" label="Фото товара" value={images} onChange={setImages} className="sm:col-span-2" />
             <Field><FieldLabel htmlFor="product-cny">Закупка, CNY</FieldLabel><Input id="product-cny" name="purchasePriceCny" type="number" min="0" max="100000000" step="0.01" inputMode="decimal" /></Field>
             <Field><FieldLabel htmlFor="product-cost">Себестоимость, ₽</FieldLabel><Input id="product-cost" name="purchasePriceRub" type="number" min="0" max="100000000" step="0.01" inputMode="decimal" /></Field>
             <Field><FieldLabel htmlFor="product-price">Цена продажи, ₽</FieldLabel><Input id="product-price" name="salePriceRub" type="number" min="0" max="100000000" step="0.01" inputMode="decimal" /></Field>
@@ -129,7 +140,7 @@ function ProductDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
             <Field className="sm:col-span-2"><FieldLabel htmlFor="product-description">Описание</FieldLabel><Textarea id="product-description" name="description" maxLength={8000} rows={4} /></Field>
           </FieldGroup>
           {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-          <DialogFooter><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button><Button type="submit" disabled={pending}>{pending ? 'Сохраняю…' : 'Сохранить товар'}</Button></DialogFooter>
+          <DialogFooter><Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>Отмена</Button><Button type="submit" disabled={pending}>{pending ? 'Сохраняю…' : 'Сохранить товар'}</Button></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
@@ -205,6 +216,11 @@ function ProductEditDialog({ product, onOpenChange }: { product: WorkspaceProduc
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState('')
+  const [images, setImages] = useState<string[]>([])
+
+  useEffect(() => {
+    setImages(product?.images ?? [])
+  }, [product?.id])
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -243,7 +259,7 @@ function ProductEditDialog({ product, onOpenChange }: { product: WorkspaceProduc
             <Field><FieldLabel htmlFor="edit-product-source">Источник / площадка</FieldLabel><Input id="edit-product-source" name="source" maxLength={120} defaultValue={product.source} /></Field>
             <Field><FieldLabel htmlFor="edit-product-supplier">Поставщик</FieldLabel><Input id="edit-product-supplier" name="supplierName" maxLength={180} defaultValue={product.supplier === '—' ? '' : product.supplier} /></Field>
             <Field><FieldLabel htmlFor="edit-product-sizes">Размеры через запятую</FieldLabel><Input id="edit-product-sizes" name="sizes" maxLength={240} defaultValue={product.sizes.join(', ')} /></Field>
-            <Field className="sm:col-span-2"><FieldLabel htmlFor="edit-product-images">Ссылки на фото</FieldLabel><Textarea id="edit-product-images" name="images" maxLength={20000} rows={3} defaultValue={product.images.join('\n')} placeholder="Публичные HTTPS-ссылки, по одной на строку" /><p className="text-xs text-muted-foreground">До 10 фото; их URL используются для Telegram-публикации.</p></Field>
+            <ImageUploadField id="edit-product-images" name="images" label="Фото товара" value={images} onChange={setImages} className="sm:col-span-2" />
             <Field><FieldLabel htmlFor="edit-product-cny">Закупка, CNY</FieldLabel><Input id="edit-product-cny" name="purchasePriceCny" type="number" min="0" max="100000000" step="0.01" defaultValue={product.purchaseCny} /></Field>
             <Field><FieldLabel htmlFor="edit-product-cost">Себестоимость, ₽</FieldLabel><Input id="edit-product-cost" name="purchasePriceRub" type="number" min="0" max="100000000" step="0.01" defaultValue={product.purchaseRub} /></Field>
             <Field><FieldLabel htmlFor="edit-product-price">Цена продажи, ₽</FieldLabel><Input id="edit-product-price" name="salePriceRub" type="number" min="0" max="100000000" step="0.01" defaultValue={product.salePriceRub} /></Field>
