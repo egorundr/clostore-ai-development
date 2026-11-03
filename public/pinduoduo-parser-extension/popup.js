@@ -132,9 +132,13 @@ scanButton.addEventListener('click', async () => {
       return
     }
 
-    setStatus(`Разобрано ${scan.products.length}; добавлено ${result.imported}, дубликаты ${result.duplicates}, пропущено ${result.rejected}.`, 'success')
+    const importSummary = `Разобрано ${scan.products.length}; добавлено ${result.imported}, дубликаты ${result.duplicates}, пропущено ${result.rejected}.`
+    const agentReport = result.agentReport?.ok
+      ? `\n\nОтчёт агента:\n${result.agentReport.text}${result.agentReport.pendingApprovalCount ? `\n\nПодготовлено изменений карточек: ${result.agentReport.pendingApprovalCount}. Подтвердите их в разделе AI-агент.` : '\n\nПолный отчёт сохранён в истории AI-агента.'}`
+      : '\n\nТовары сохранены, но отчёт агента не подготовлен. Повторите запрос позже или попросите отчёт в разделе AI-агент.'
+    setStatus(`${importSummary}${agentReport}`, 'success')
   } catch {
-    setStatus('Не удалось завершить сканирование. Проверьте подключение и открытую вкладку.', 'error')
+    setStatus('Не удалось получить итоговый ответ Clostore. Товары могли сохраниться; проверьте очередь каталога и историю AI-агента перед повторным запуском.', 'error')
   } finally {
     scanButton.disabled = false
     scanButton.textContent = originalText

@@ -167,7 +167,7 @@ export type IntegrationStatus = {
 
 export type AgentPendingApproval = {
   approvalId: string
-  toolName: 'createProductDraft' | 'updateOrderStatus' | 'recordExpense'
+  toolName: 'createProductDraft' | 'updateProductCard' | 'updateOrderStatus' | 'recordExpense'
   input: Record<string, unknown>
   reason?: string
 }

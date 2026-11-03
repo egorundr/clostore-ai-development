@@ -12,7 +12,9 @@
 body {
   width: 360px;
   min-width: 320px;
+  max-height: 600px;
   margin: 0;
+  overflow-y: auto;
   background: #101311;
 }
 
@@ -132,7 +134,11 @@ textarea {
 }
 
 .status {
+  max-height: 260px;
   min-height: 34px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
   color: #c6d3c8;
   font-size: 11px;
   line-height: 1.5;

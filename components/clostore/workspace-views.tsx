@@ -117,6 +117,14 @@ function approvalDetails(approval: AgentTaskPreview['pendingApprovals'][number])
       ['Размеры', show(input.sizes)],
     ]
   }
+  if (approval.toolName === 'updateProductCard') {
+    return [
+      ['Товар', show(input.currentName)],
+      ['Название', input.name == null ? 'Без изменения' : show(input.name)],
+      ['Категория', input.category == null ? 'Без изменения' : show(input.category)],
+      ['Описание', input.description == null ? 'Без изменения' : show(input.description)],
+    ]
+  }
   if (approval.toolName === 'updateOrderStatus') {
     return [
       ['Заказ', `…${show(input.orderId).slice(-8)}`],
@@ -132,6 +140,7 @@ function approvalDetails(approval: AgentTaskPreview['pendingApprovals'][number])
 
 function approvalTitle(toolName: AgentTaskPreview['pendingApprovals'][number]['toolName']) {
   if (toolName === 'createProductDraft') return 'Создать черновик товара'
+  if (toolName === 'updateProductCard') return 'Подготовить карточку товара'
   if (toolName === 'updateOrderStatus') return 'Изменить статус заказа'
   return 'Добавить расход'
 }
@@ -159,7 +168,7 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
   const [error, setError] = useState('')
   const [pending, startTransition] = useTransition()
   const composerRef = useRef<HTMLTextAreaElement>(null)
-  const suggestions = ['Покажи активные товары в каталоге', 'Какие заказы сейчас в пути?', 'Создай черновик товара из моего описания']
+  const suggestions = ['Покажи активные товары в каталоге', 'Какие заказы сейчас в пути?', 'Составь отчёт по товарам Pinduoduo и подготовь карточки', 'Создай черновик товара из моего описания']
   const activeTask = selectedTaskId ? tasks.find((item) => item.id === selectedTaskId) ?? tasks[0] : undefined
   const filteredTasks = useMemo(() => {
     const query = historyQuery.trim().toLocaleLowerCase('ru-RU')
@@ -402,7 +411,7 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
               <Separator className="bg-white/[0.06]" />
               <div className="flex items-start gap-2.5">
                 <CheckCircle2 className="mt-0.5 shrink-0 text-emerald-200" />
-                <div><p className="font-medium text-foreground">Изменения под контролем</p><p className="mt-1">Создание карточек, обновление статусов и расходы — только после вашего подтверждения.</p></div>
+                <div><p className="font-medium text-foreground">Изменения под контролем</p><p className="mt-1">Создание и редактирование карточек, обновление статусов и расходы — только после вашего подтверждения.</p></div>
               </div>
               <p>Контакты покупателей не передаются. Telegram, Avito, закупки и интернет-поиск пока не подключены.</p>
             </CardContent>

@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { importPinduoduoProduct } from '@/app/actions/pinduoduo'
+import { createPinduoduoImportReport, importPinduoduoProduct } from '@/app/actions/pinduoduo'
 import { getPersonalWorkspaceUserId } from '@/lib/personal-workspace'
 import { verifyPinduoduoExtensionToken } from '@/lib/pinduoduo-extension-token'
 
 export const runtime = 'nodejs'
+export const maxDuration = 60
 
 const productSchema = z.object({
   name: z.string().trim().min(2).max(180),
@@ -52,6 +53,7 @@ export async function POST(request: Request) {
   let imported = 0
   let duplicates = 0
   let rejected = 0
+  const productIds: string[] = []
 
   for (const product of parsed.data.products) {
     const result = await importPinduoduoProduct(product)
@@ -59,10 +61,32 @@ export async function POST(request: Request) {
       rejected += 1
     } else if (result.alreadySaved) {
       duplicates += 1
+      productIds.push(result.productId)
     } else {
       imported += 1
+      productIds.push(result.productId)
     }
   }
 
-  return NextResponse.json({ ok: true, imported, duplicates, rejected })
+  let agentReport: { ok: boolean; text?: string; status?: string; pendingApprovalCount?: number; reason?: string } = {
+    ok: false,
+    reason: 'no_imported_products',
+  }
+  if (productIds.length) {
+    try {
+      const report = await createPinduoduoImportReport(productIds)
+      agentReport = report.ok
+        ? {
+            ok: true,
+            text: report.task.response,
+            status: report.task.status,
+            pendingApprovalCount: report.task.pendingApprovals.length,
+          }
+        : { ok: false, reason: report.reason }
+    } catch {
+      agentReport = { ok: false, reason: 'agent_unavailable' }
+    }
+  }
+
+  return NextResponse.json({ ok: true, imported, duplicates, rejected, agentReport })
 }

@@ -1,7 +1,7 @@
 'use server'
 
 import { randomUUID } from 'node:crypto'
-import { and, count, desc, eq, gte, ilike, or, sql } from 'drizzle-orm'
+import { and, count, desc, eq, gte, ilike, inArray, or, sql } from 'drizzle-orm'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { ToolLoopAgent, isStepCount, tool, type ModelMessage, type ToolApprovalResponse } from 'ai'
 import { z } from 'zod'
@@ -19,7 +19,7 @@ const MAX_AGENT_STEPS = 6
 
 const approvalSchema = z.object({
   approvalId: z.string().min(1).max(200),
-  toolName: z.enum(['createProductDraft', 'updateOrderStatus', 'recordExpense']),
+  toolName: z.enum(['createProductDraft', 'updateProductCard', 'updateOrderStatus', 'recordExpense']),
   input: z.record(z.string(), z.unknown()),
   reason: z.string().max(500).optional(),
 })
@@ -63,7 +63,7 @@ function responseForResult(result: Awaited<ReturnType<ReturnType<typeof createAg
   const pendingApprovals = result.content.flatMap((part) => {
     if (part.type !== 'tool-approval-request' || part.isAutomatic) return []
     const toolCall = part.toolCall
-    if (!['createProductDraft', 'updateOrderStatus', 'recordExpense'].includes(toolCall.toolName)) return []
+    if (!['createProductDraft', 'updateProductCard', 'updateOrderStatus', 'recordExpense'].includes(toolCall.toolName)) return []
     if (!toolCall.input || typeof toolCall.input !== 'object' || Array.isArray(toolCall.input)) return []
 
     return [{
@@ -80,6 +80,7 @@ function responseForResult(result: Awaited<ReturnType<ReturnType<typeof createAg
     listOrders: 'заказы',
     getFinancialSummary: 'финансовые показатели',
     createProductDraft: 'черновик товара',
+    updateProductCard: 'карточки товаров',
     updateOrderStatus: 'статус заказа',
     recordExpense: 'расходы',
   }
@@ -114,9 +115,10 @@ function createAgent(userId: string) {
     instructions: [
       'Ты — AI-помощник личного fashion-магазина CloStore. Отвечай по-русски, структурно и кратко.',
       'Для вопросов о товарах, заказах и финансах используй инструменты. Факты и расчёты сообщай только на основе их результатов; арифметику выполняет код.',
-      'Товары, импортированные браузерным парсером Pinduoduo, становятся черновиками в каталоге. Для поиска таких товаров используй searchCatalog с source Pinduoduo. Не утверждай, что агент сам видит страницы Pinduoduo.',
+      'Товары, импортированные браузерным парсером Pinduoduo, уже являются черновиками карточек в каталоге. Для отчёта по переданным ID используй searchCatalog с productIds и source Pinduoduo; не утверждай, что агент сам видит страницы Pinduoduo.',
       'Для многошаговых задач последовательно используй доступные инструменты и кратко объясняй, что проверено.',
-      'Создание черновика товара, изменение статуса заказа и запись расхода требуют явного подтверждения пользователя. Не утверждай, что действие выполнено, пока пользователь не подтвердил его и инструмент не вернул результат.',
+      'Создание черновика товара, редактирование карточки, изменение статуса заказа и запись расхода требуют явного подтверждения пользователя. Не утверждай, что действие выполнено, пока пользователь не подтвердил его и инструмент не вернул результат.',
+      'Для карточек Pinduoduo обновляй только существующие неопубликованные черновики через updateProductCard, не создавай дубликаты. Не придумывай свойства, материал, размеры, цену в рублях или доставку; неизвестное оставляй незаполненным.',
       'После отказа не повторяй это действие. Если не хватает данных, задай уточняющий вопрос вместо того, чтобы выдумывать значения.',
       'Инструменты доступны только для личного пространства. Не запрашивай и не раскрывай имена или контакты покупателей.',
       'Публикации, закупки, интернет-поиск и любые действия с Telegram или Avito недоступны. Не изображай их выполнение.',
@@ -128,35 +130,44 @@ function createAgent(userId: string) {
     experimental_toolApprovalSecret: process.env.BETTER_AUTH_SECRET,
     toolApproval: {
       createProductDraft: 'user-approval',
+      updateProductCard: 'user-approval',
       updateOrderStatus: 'user-approval',
       recordExpense: 'user-approval',
     },
     tools: {
       searchCatalog: tool({
-        description: 'Найти товары в личном каталоге CloStore по названию, источнику Pinduoduo и необязательному статусу. Используй для вопросов о сохранённых или только что разобранных товарах.',
+        description: 'Найти товары в личном каталоге CloStore по названию, точным ID, источнику Pinduoduo и необязательному статусу. Используй productIds для отчёта по только что импортированным товарам.',
         inputSchema: z.object({
           query: z.string().max(120).optional().describe('Часть названия или категории товара'),
+          productIds: z.array(z.string().min(1).max(64)).min(1).max(12).optional().describe('Точные ID импортированных карточек'),
           status: z.enum(['active', 'review', 'draft', 'rejected']).optional().describe('Фильтр по внутреннему статусу товара'),
           source: z.enum(['Pinduoduo']).optional().describe('Фильтр по источнику товара'),
           limit: z.number().int().min(1).max(12).optional(),
         }),
-        execute: async ({ query, status, source, limit }) => {
+        execute: async ({ query, productIds, status, source, limit }) => {
           const filters = [eq(products.userId, userId)]
           const normalizedQuery = query?.trim()
+          const normalizedProductIds = productIds ? [...new Set(productIds)] : []
           if (normalizedQuery) filters.push(or(
             ilike(products.name, `%${normalizedQuery}%`),
             ilike(products.category, `%${normalizedQuery}%`),
           )!)
+          if (normalizedProductIds.length) filters.push(inArray(products.id, normalizedProductIds))
           if (status) filters.push(eq(products.status, status))
           if (source) filters.push(eq(products.source, source))
 
           const rows = await db.select({
+            id: products.id,
             name: products.name,
             category: products.category,
             source: products.source,
+            sourceUrl: products.sourceUrl,
+            purchasePriceCny: products.purchasePriceCny,
             purchasePriceRub: products.purchasePriceRub,
             salePriceRub: products.salePriceRub,
             sizes: products.sizes,
+            images: products.images,
+            description: products.description,
             status: products.status,
           }).from(products)
             .where(and(...filters))
@@ -164,23 +175,31 @@ function createAgent(userId: string) {
             .limit(limit ?? 8)
 
           return rows.map((row) => {
+            const purchasePriceCny = Number(row.purchasePriceCny)
             const purchasePriceRub = Number(row.purchasePriceRub)
             const salePriceRub = Number(row.salePriceRub)
             return {
+              id: row.id,
               name: row.name,
               category: row.category,
               source: row.source,
+              sourceUrl: row.sourceUrl,
+              purchasePriceCny,
               purchasePriceRub,
               salePriceRub,
-              grossMarginRub: Math.round((salePriceRub - purchasePriceRub) * 100) / 100,
+              grossMarginRub: purchasePriceRub > 0 && salePriceRub > 0
+                ? Math.round((salePriceRub - purchasePriceRub) * 100) / 100
+                : null,
               sizes: row.sizes,
+              imageCount: row.images.length,
+              description: row.description,
               status: row.status,
             }
           })
         },
       }),
       listSuppliers: tool({
-        description: 'Найти сохранённых поставщиков CloStore и показать только реальные поля из Neon: площадку, ссылку, статус, заметки и количество связанных товаров. Рейтинг и отзывы не выдумывай — их нет в текущей базе.',
+        description: 'Найти сохранённых поставщиков CloStore и показать только реальные пол�� из Neon: площадку, ссылку, статус, заметки и количество связанных товаров. Рейтинг и отзывы не выдумывай — их нет в текущей базе.',
         inputSchema: z.object({ query: z.string().max(120).optional(), limit: z.number().int().min(1).max(20).optional() }),
         execute: async ({ query, limit }) => {
           const filters = [eq(suppliers.userId, userId)]
@@ -298,6 +317,37 @@ function createAgent(userId: string) {
             listingStatus: 'unpublished',
           })
           return { created: true, id, name, status: 'добавлен в очередь проверки', published: false }
+        },
+      }),
+      updateProductCard: tool({
+        description: 'Обновить название, категорию или описание существующей неопубликованной карточки Pinduoduo после подтверждения пользователя. Не меняет цену, размеры, источник или статус.',
+        inputSchema: z.object({
+          productId: z.string().min(1).max(64),
+          currentName: z.string().trim().min(1).max(180),
+          name: z.string().trim().min(2).max(180).optional(),
+          category: z.string().trim().max(120).optional(),
+          description: z.string().trim().min(1).max(1200).optional(),
+        }).refine((input) => input.name !== undefined || input.category !== undefined || input.description !== undefined, {
+          message: 'Укажите хотя бы одно поле карточки для обновления.',
+        }),
+        execute: async (input) => {
+          const updates: { name?: string; category?: string; description?: string; updatedAt: Date } = { updatedAt: new Date() }
+          if (input.name !== undefined) updates.name = input.name.trim()
+          if (input.category !== undefined) updates.category = input.category.trim()
+          if (input.description !== undefined) updates.description = input.description.trim()
+
+          const [updated] = await db.update(products).set(updates).where(and(
+            eq(products.id, input.productId),
+            eq(products.name, input.currentName),
+            eq(products.userId, userId),
+            eq(products.source, 'Pinduoduo'),
+            eq(products.listingStatus, 'unpublished'),
+            or(eq(products.status, 'review'), eq(products.status, 'draft'))!,
+          )).returning({ id: products.id, name: products.name })
+
+          if (!updated) return { updated: false, reason: 'Карточка не найдена или уже не является неопубликованным черновиком Pinduoduo.' }
+          revalidatePath('/')
+          return { updated: true, id: updated.id, name: updated.name, status: 'черновик обновлён', published: false }
         },
       }),
       updateOrderStatus: tool({
@@ -458,6 +508,7 @@ export async function runAgentTask(rawPrompt: string) {
       outputTokens,
       updatedAt: new Date(),
     }).where(and(eq(agentTasks.id, taskId), eq(agentTasks.userId, userId)))
+    revalidatePath('/')
 
     return { ok: true as const, task: toTaskPreview({
       id: taskId,
@@ -523,7 +574,7 @@ export async function respondToAgentApprovals(
   const decisionsResult = z.array(z.object({
     approvalId: z.string().min(1).max(200),
     approved: z.boolean(),
-  })).min(1).max(8).safeParse(rawDecisions)
+  })).min(1).max(12).safeParse(rawDecisions)
   if (typeof taskId !== 'string' || taskId.length > 64 || !decisionsResult.success) {
     return { ok: false as const, reason: 'invalid_input' as const }
   }

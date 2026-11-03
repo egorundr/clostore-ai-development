@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { Copy, ExternalLink, LoaderCircle, Search, Upload } from 'lucide-react'
-import { createPinduoduoExtensionToken, importPinduoduoProduct } from '@/app/actions/pinduoduo'
+import { createPinduoduoExtensionToken, createPinduoduoImportReport, importPinduoduoProduct } from '@/app/actions/pinduoduo'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -168,7 +168,20 @@ export function PinduoduoSearchPanel() {
           setError(result.message)
           return
         }
-        setNotice(result.alreadySaved ? 'Этот товар уже есть в очереди проверки.' : 'Товар добавлен в очередь проверки.')
+        const savedNotice = result.alreadySaved ? 'Этот товар уже есть в очереди проверки.' : 'Товар добавлен в очередь проверки.'
+        let reportNotice = 'Отчёт агента пока не сформирован. Товар сохранён; запросите отчёт в разделе AI-агент.'
+        try {
+          const report = await createPinduoduoImportReport([result.productId])
+          if (report.ok) {
+            const approvalNote = report.task.pendingApprovals.length
+              ? `\n\nПодготовлено изменений карточки: ${report.task.pendingApprovals.length}. Подтвердите их в разделе AI-агент.`
+              : '\n\nПолный отчёт сохранён в истории AI-агента.'
+            reportNotice = `Отчёт агента:\n${report.task.response}${approvalNote}`
+          }
+        } catch {
+          reportNotice = 'Отчёт агента пока не сформирован. Товар сохранён; запросите отчёт в разделе AI-агент.'
+        }
+        setNotice(`${savedNotice}\n\n${reportNotice}`)
         router.refresh()
       } catch {
         setError('Не удалось добавить товар. Проверьте ссылку и попробуйте ещё раз.')
@@ -235,7 +248,7 @@ export function PinduoduoSearchPanel() {
               <li>1. Распакуйте ZIP и загрузите папку в Chrome через «Расширения» → «Режим разработчика» → «Загрузить распакованное».</li>
               <li>2. В расширении укажите адрес Clostore и временный токен из этого окна.</li>
               <li>3. Откройте поиск Pinduoduo выше, нажмите значок расширения и выберите «Считать товары с этой страницы».</li>
-              <li>4. Спросите AI-агента о товарах Pinduoduo — он найдёт импортированные черновики в каталоге.</li>
+              <li>4. После импорта агент автоматически составит отчёт и подготовит предложения для карточек. Подтвердите изменения в разделе AI-агент.</li>
             </ol>
           </div>
 
@@ -284,7 +297,7 @@ export function PinduoduoSearchPanel() {
             <Textarea id="pdd-share-text" value={shareText} onChange={(event) => setShareText(event.target.value)} maxLength={5000} placeholder="Вставьте текст карточки или сообщения «Поделиться»" className="min-h-20" />
           </Field>
           <Button type="button" variant="secondary" onClick={parseCopiedShareText} disabled={!shareText.trim()}>
-            <Search data-icon="inline-start" />Разобрать скопированный текст
+            <Search data-icon="inline-start" />Разобр��ть скопированный текст
           </Button>
 
           <form onSubmit={importProduct} className="flex flex-col gap-4 border-t border-white/[0.06] pt-4">
@@ -315,11 +328,11 @@ export function PinduoduoSearchPanel() {
               <p className="text-xs text-muted-foreground">Импорт создаёт товар со статусом «Проверка», не публикацию.</p>
               <Button type="submit" disabled={pending || !productUrl.trim() || !name.trim()}>
                 {pending ? <LoaderCircle data-icon="inline-start" className="animate-spin" /> : <Upload data-icon="inline-start" />}
-                Добавить в очередь проверки
+                {pending ? 'Импортируем и готовим отчёт…' : 'Добавить в очередь проверки'}
               </Button>
             </div>
           </form>
-          {notice && <p role="status" aria-live="polite" className="text-sm text-emerald-200">{notice}</p>}
+          {notice && <p role="status" aria-live="polite" className="max-h-72 overflow-y-auto whitespace-pre-wrap text-sm text-emerald-200">{notice}</p>}
           {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         </CardContent>
       </Card>

@@ -8,6 +8,7 @@ import { db } from '@/lib/db'
 import { products, suppliers } from '@/lib/db/schema'
 import { getPersonalWorkspaceUserId } from '@/lib/personal-workspace'
 import { issuePinduoduoExtensionToken } from '@/lib/pinduoduo-extension-token'
+import { runAgentTask } from '@/app/actions/agent'
 
 const importProductSchema = z.object({
   name: z.string().trim().min(2, 'Укажите название товара.').max(180),
@@ -59,7 +60,7 @@ export async function importPinduoduoProduct(input: unknown) {
     eq(products.userId, userId),
     eq(products.sourceUrl, productUrl),
   )).limit(1)
-  if (existing) return { ok: true as const, alreadySaved: true as const }
+  if (existing) return { ok: true as const, alreadySaved: true as const, productId: existing.id }
 
   const productId = randomUUID()
   const supplierName = parsed.data.sellerName
@@ -106,6 +107,22 @@ export async function importPinduoduoProduct(input: unknown) {
 
   revalidatePath('/')
   return { ok: true as const, alreadySaved: false as const, productId }
+}
+
+export async function createPinduoduoImportReport(rawProductIds: unknown) {
+  const parsed = z.array(z.string().trim().min(1).max(64)).min(1).max(12).safeParse(rawProductIds)
+  if (!parsed.success) return { ok: false as const, reason: 'invalid_input' as const }
+
+  const productIds = [...new Set(parsed.data)]
+  const prompt = [
+    'Подготовь отчёт по товарам, которые только что импортированы с Pinduoduo, и предложи безопасное оформление их черновых карточек.',
+    `Работай строго с этими ID: ${JSON.stringify(productIds)}. Сначала вызови searchCatalog с productIds и source Pinduoduo.`,
+    'В отчёте перечисли название, закупочную цену в CNY, количество фото, категорию и текущий статус. Отдельно укажи, каких данных для готовой карточки не хватает; нулевые цены в рублях не трактуй как реальные цены или маржу.',
+    'Если по названию и уже сохранённому описанию можно подготовить аккуратное название, категорию или описание без выдуманных характеристик, вызови updateProductCard для существующей карточки, передав её точные id и currentName из searchCatalog. Не меняй цены, размеры, статус и источник; не создавай дубликаты через createProductDraft.',
+    'Все изменения карточек должны остаться на подтверждении пользователя. Не говори, что они уже применены. Не придумывай материал, свойства, размеры, продавца, цену в рублях, доставку или спрос. Если данных недостаточно — оставь поле как есть и отметь это в отчёте.',
+  ].join('\n')
+
+  return runAgentTask(prompt)
 }
 
 export async function createPinduoduoExtensionToken() {
