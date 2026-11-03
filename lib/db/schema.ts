@@ -176,6 +176,7 @@ export const publicationTemplates = pgTable('publication_templates', {
   title: text('title').notNull(),
   body: text('body').notNull(),
   imageUrls: jsonb('imageUrls').$type<string[]>().notNull().default([]),
+  imageTemplateUrl: text('imageTemplateUrl'),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
   updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 }, (table) => [index('publication_templates_user_updated_idx').on(table.userId, table.updatedAt)])

@@ -25,6 +25,7 @@ interface ImageUploadFieldProps {
   maxImages?: number
   maxImageSizeBytes?: number
   allowedMimeTypes?: string[]
+  previewAltLabel?: string
 }
 
 export function ImageUploadField({
@@ -37,6 +38,7 @@ export function ImageUploadField({
   maxImages = MAX_IMAGES,
   maxImageSizeBytes = MAX_IMAGE_SIZE,
   allowedMimeTypes = Object.keys(FILE_EXTENSIONS),
+  previewAltLabel = 'Фото товара',
 }: ImageUploadFieldProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const maxSizeLabel = maxImageSizeBytes < 1024 * 1024
@@ -143,7 +145,7 @@ export function ImageUploadField({
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-5" aria-label="Предпросмотр фотографий">
           {value.map((url, index) => (
             <div key={`${url}-${index}`} className="group relative aspect-square overflow-hidden rounded-md border border-white/10 bg-background">
-              <img src={url} alt={`Фото товара ${index + 1}`} loading="lazy" decoding="async" className="size-full object-cover" />
+              <img src={url} alt={`${previewAltLabel} ${index + 1}`} loading="lazy" decoding="async" className="size-full object-cover" />
               <Button
                 type="button"
                 variant="secondary"

@@ -193,6 +193,7 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
       title: template.title,
       body: template.body,
       imageUrls: Array.isArray(template.imageUrls) ? template.imageUrls : [],
+      imageTemplateUrl: template.imageTemplateUrl ?? null,
       createdAt: template.createdAt.toISOString(),
       updatedAt: template.updatedAt.toISOString(),
     })),

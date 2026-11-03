@@ -142,6 +142,7 @@ export type PublicationTemplate = {
   title: string
   body: string
   imageUrls: string[]
+  imageTemplateUrl: string | null
   createdAt: string
   updatedAt: string
 }

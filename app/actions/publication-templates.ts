@@ -26,9 +26,12 @@ function parseImageUrls(value: unknown) {
 
 const saveTemplateSchema = z.object({
   name: z.string().trim().min(1, 'Укажите название шаблона.').max(80),
-  title: z.string().trim().min(1, 'Заполните заголовок, который войдёт в шаблон.').max(120),
+  title: z.string().trim().max(120),
   body: z.string().trim().max(3800),
   imageUrls: z.array(z.string().max(2048)).max(10),
+  imageTemplateUrl: z.string().trim().max(2048).nullable().optional(),
+}).refine((value) => Boolean(value.title || value.imageTemplateUrl?.trim()), {
+  message: 'Укажите заголовок объявления или загрузите визуальный шаблон.',
 })
 
 const createDraftSchema = z.object({
@@ -56,8 +59,12 @@ export async function savePublicationTemplate(input: unknown) {
   if (!parsed.success) return { ok: false as const, message: parsed.error.issues[0]?.message ?? 'Проверьте поля шаблона.' }
 
   let imageUrls: string[]
+  let imageTemplateUrl: string | null = null
   try {
     imageUrls = parseImageUrls(parsed.data.imageUrls)
+    imageTemplateUrl = parsed.data.imageTemplateUrl?.trim()
+      ? parseImageUrls([parsed.data.imageTemplateUrl])[0] ?? null
+      : null
   } catch (error) {
     return { ok: false as const, message: error instanceof Error ? error.message : 'Проверьте ссылки на фото.' }
   }
@@ -71,6 +78,7 @@ export async function savePublicationTemplate(input: unknown) {
     title: parsed.data.title,
     body: parsed.data.body,
     imageUrls,
+    imageTemplateUrl,
     createdAt: now,
     updatedAt: now,
   })
@@ -81,6 +89,7 @@ export async function savePublicationTemplate(input: unknown) {
     title: parsed.data.title,
     body: parsed.data.body,
     imageUrls,
+    imageTemplateUrl,
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
   }
