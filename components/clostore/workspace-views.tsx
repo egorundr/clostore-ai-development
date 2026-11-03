@@ -97,7 +97,7 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
   const [selectedTaskId, setSelectedTaskId] = useState(initialTasks[0]?.id ?? '')
   const [error, setError] = useState('')
   const [pending, startTransition] = useTransition()
-  const suggestions = ['Составь план поиска аналогов на Pinduoduo', 'Подготовь список вопросов поставщику', 'Объясни формулу расчёта цены продажи']
+  const suggestions = ['Покажи активные товары в каталоге', 'Какие заказы сейчас в пути?', 'Объясни формулу расчёта цены продажи']
   const activeTask = tasks.find((item) => item.id === selectedTaskId) ?? tasks[0]
 
   function submitTask(event: React.FormEvent<HTMLFormElement>) {
@@ -109,7 +109,7 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
       try {
         const result = await runAgentTask(prompt)
         if (!result.ok) {
-          setError(result.reason === 'invalid_input' ? 'Введите задачу длиной до 4 000 символов.' : result.reason === 'rate_limited' ? 'Лимит достигнут: не более 10 запросов за час.' : 'DeepSeek временно недоступен. История попытки сохранена; попробуйте ещё раз позже.')
+          setError(result.reason === 'invalid_input' ? 'Введите задачу длиной до 4 000 символов.' : result.reason === 'rate_limited' ? 'Лимит достигнут: не более 10 запросов за час.' : result.reason === 'gateway_billing_required' ? 'AI Gateway требует привязать карту в аккаунте Vercel. После этого можно повторить запрос.' : 'DeepSeek временно недоступен. История попытки сохранена; попробуйте ещё раз позже.')
           return
         }
         setTasks((current) => [result.task, ...current.filter((item) => item.id !== result.task.id)].slice(0, 20))
@@ -123,7 +123,7 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
 
   return (
     <div className="space-y-5">
-      <SectionHeading title="AI-агент" description="Текстовый помощник на DeepSeek. Инструменты подключаются отдельно и не запускаются без подтверждения." action={<Badge variant="outline" className="w-fit border-emerald-300/20 text-emerald-100"><span className="mr-2 size-1.5 rounded-full bg-emerald-300" />DeepSeek через AI Gateway</Badge>} />
+      <SectionHeading title="AI-агент" description="Читает каталог и статусы заказов CloStore. Изменения и публикации не выполняет." action={<Badge variant="outline" className="w-fit border-emerald-300/20 text-emerald-100"><span className="mr-2 size-1.5 rounded-full bg-emerald-300" />DeepSeek через AI Gateway</Badge>} />
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <Card className="flex min-h-[480px] flex-col border-white/[0.07] bg-card/80 shadow-none">
           <CardHeader className="flex flex-row items-center gap-3 border-b border-white/[0.06]">
@@ -134,7 +134,7 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
               {activeTask ? <>
                 <div className="ml-auto max-w-xl rounded-xl border border-white/[0.08] bg-white/[0.045] p-4"><p className="text-xs text-muted-foreground">Ваша задача</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6">{activeTask.prompt}</p></div>
                 <div className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4"><p className="mb-2 text-xs text-muted-foreground">Ответ агента</p>{activeTask.status === 'completed' ? <p className="whitespace-pre-wrap text-sm leading-6">{activeTask.response}</p> : <p className="text-sm text-muted-foreground">{activeTask.status === 'running' ? 'Задача выполняется…' : 'Запрос завершился ошибкой. Отправьте его повторно.'}</p>}<p className="mt-3 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Moscow' }).format(new Date(activeTask.createdAt))}{activeTask.inputTokens != null && activeTask.outputTokens != null ? ` · ${activeTask.inputTokens + activeTask.outputTokens} токенов` : ''}</p></div>
-              </> : <div className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4"><p className="text-sm leading-6">Опишите цель обычным языком. Сейчас агент отвечает только текстом и не имеет доступа к интернет-поиску, товарам, зак��зам или каналам продаж.</p><p className="mt-3 text-xs text-muted-foreground">Закупка, публикация и изменение финансовых данных не выполняются.</p></div>}
+              </> : <div className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4"><p className="text-sm leading-6">Опишите цель обычным языком. Агент может искать товары в твоём каталоге и проверять статусы заказов.</p><p className="mt-3 text-xs text-muted-foreground">Интернет-поиск, закупка, публикация и изменение данных пока отключены.</p></div>}
               {pending && <div role="status" className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4 text-sm text-muted-foreground">DeepSeek готовит ответ…</div>}
               {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
             </div>
@@ -142,7 +142,7 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
               <div className="flex flex-wrap gap-2">{suggestions.map((item) => <Button key={item} type="button" variant="outline" size="sm" disabled={pending} onClick={() => setTask(item)}>{item}</Button>)}</div>
               <Field>
                 <FieldLabel htmlFor="agent-task" className="sr-only">Текст задачи</FieldLabel>
-                <Textarea id="agent-task" maxLength={4000} value={task} onChange={(event) => setTask(event.target.value)} placeholder="Опишите задачу для текстового помощника…" className="min-h-24 resize-y border-white/10 bg-black/10" />
+                <Textarea id="agent-task" maxLength={4000} value={task} onChange={(event) => setTask(event.target.value)} placeholder="Опишите задачу для AI-агента…" className="min-h-24 resize-y border-white/10 bg-black/10" />
               </Field>
               <div className="flex items-center justify-between gap-3"><span className="text-xs text-muted-foreground">До 4 000 символов · без автоматических действий</span><Button type="submit" disabled={!task.trim() || pending}>{pending ? <><LoaderCircle data-icon="inline-start" className="animate-spin" /> Отправка…</> : <><Send data-icon="inline-start" /> Спросить DeepSeek</>}</Button></div>
             </form>
@@ -150,7 +150,7 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
         </Card>
         <aside className="space-y-4">
           <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Последние задания</CardTitle><p className="text-xs text-muted-foreground">Сохранённая история · до 20 задач</p></CardHeader><CardContent className="space-y-2">{tasks.length ? tasks.slice(0, 8).map((item) => <button key={item.id} type="button" onClick={() => setSelectedTaskId(item.id)} className={`w-full rounded-lg border p-3 text-left transition-colors ${selectedTaskId === item.id ? 'border-white/15 bg-white/[0.05]' : 'border-white/[0.06] hover:bg-white/[0.03]'}`}><span className="block truncate text-xs font-medium">{item.prompt}</span><span className="mt-1 block text-[10px] text-muted-foreground">{item.status === 'completed' ? 'Готово' : item.status === 'running' ? 'Выполняется' : 'Ошибка'} · {new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeZone: 'Europe/Moscow' }).format(new Date(item.createdAt))}</span></button>) : <div className="rounded-lg border border-dashed border-white/10 p-4 text-center"><MessageSquareText className="mx-auto text-muted-foreground" /><p className="mt-3 text-sm">Сохранённых задач пока нет</p></div>}</CardContent></Card>
-          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Границы текущего этапа</CardTitle></CardHeader><CardContent className="space-y-3 text-xs leading-5 text-muted-foreground"><p>Агент использует DeepSeek через AI Gateway. Секреты провайдера не передаются в браузер.</p><p>Для Telegram доступен серверный тест Bot API через Vercel Connect. Отправка публикаций остаётся выключенной до настройки получателя и явного подтверждения.</p></CardContent></Card>
+          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Доступ к данным</CardTitle></CardHeader><CardContent className="space-y-3 text-xs leading-5 text-muted-foreground"><p>DeepSeek через AI Gateway получает только данные каталога и заказов, нужные для ответа. Контакты покупателей агенту не передаются.</p><p>Инструменты доступны только для чтения: они не меняют каталог, заказы, финансы или Telegram.</p></CardContent></Card>
         </aside>
       </div>
     </div>
