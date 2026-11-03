@@ -37,7 +37,7 @@ import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { DashboardView } from './dashboard-view'
 import { WorkspaceView } from './workspace-views'
-import type { AgentTaskPreview, IntegrationStatus, NavigationGroup, SectionId, WorkspaceData } from './types'
+import type { AgentTaskPreview, AgentUsageSummary, IntegrationStatus, NavigationGroup, SectionId, WorkspaceData } from './types'
 
 const navigation: NavigationGroup[] = [
   {
@@ -134,7 +134,7 @@ function Sidebar({ active, onNavigate, mobile = false, onClose, reviewCount, dee
   )
 }
 
-export function CloStoreApp({ initialData, initialAgentTasks, integrations }: { initialData: WorkspaceData; initialAgentTasks: AgentTaskPreview[]; integrations: IntegrationStatus[] }) {
+export function CloStoreApp({ initialData, initialAgentTasks, initialAgentUsage, integrations }: { initialData: WorkspaceData; initialAgentTasks: AgentTaskPreview[]; initialAgentUsage: AgentUsageSummary; integrations: IntegrationStatus[] }) {
   const deepseekConfigured = integrations.find((integration) => integration.name === 'DeepSeek API')?.configured ?? false
   const [active, setActive] = useState<SectionId>('dashboard')
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -159,12 +159,12 @@ export function CloStoreApp({ initialData, initialAgentTasks, integrations }: { 
             <Badge variant="outline" className="hidden border-white/[0.08] bg-white/[0.025] text-[10px] text-muted-foreground xl:inline-flex"><span className="mr-1.5 size-1.5 rounded-full bg-emerald-300" />Neon подключён</Badge>
             <div className="relative">
               <Button size="icon" variant="ghost" aria-label="Уведомления" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((value) => !value)}><Bell /></Button>
-              {notificationsOpen && <div className="absolute right-0 z-40 mt-2 w-72 rounded-xl border border-white/10 bg-[#1b1d20] p-4 shadow-2xl"><p className="text-sm font-medium">Уведомления</p><p className="mt-2 text-xs leading-5 text-muted-foreground">��ока нет подключённых уведомлений. Здесь появятся события по заказам и задачам.</p></div>}
+              {notificationsOpen && <div className="absolute right-0 z-40 mt-2 w-72 rounded-xl border border-white/10 bg-[#1b1d20] p-4 shadow-2xl"><p className="text-sm font-medium">Уведомления</p><p className="mt-2 text-xs leading-5 text-muted-foreground">Пока нет подключённых уведомлений. Здесь появятся события по заказам и задачам.</p></div>}
             </div>
             <Button className="hidden sm:inline-flex" variant="outline" size="sm" onClick={() => setQuickActionsOpen(true)}><Command data-icon="inline-start" /> Быстрое действие</Button>
           </header>
           <main className="mx-auto w-full max-w-[1560px] px-4 py-6 sm:px-6 sm:py-7 lg:px-8">
-            {active === 'dashboard' ? <DashboardView data={initialData} onNavigate={navigate} deepseekConfigured={deepseekConfigured} /> : <WorkspaceView section={active} onNavigate={navigate} data={initialData} agentTasks={initialAgentTasks} integrations={integrations} />}
+            {active === 'dashboard' ? <DashboardView data={initialData} onNavigate={navigate} deepseekConfigured={deepseekConfigured} /> : <WorkspaceView section={active} onNavigate={navigate} data={initialData} agentTasks={initialAgentTasks} agentUsage={initialAgentUsage} integrations={integrations} />}
           </main>
           <footer className="px-4 pb-5 text-center text-[10px] text-muted-foreground/60 sm:px-6">CloStore AI · рабочее пространство · ранняя версия</footer>
         </div>
@@ -176,7 +176,7 @@ export function CloStoreApp({ initialData, initialAgentTasks, integrations }: { 
             {[
               { label: 'Запустить поиск товаров', section: 'search' as const, icon: Search },
               { label: 'Открыть AI-агента', section: 'agent' as const, icon: Bot },
-              { label: 'Создать ��аказ', section: 'orders' as const, icon: Truck },
+              { label: 'Создать заказ', section: 'orders' as const, icon: Truck },
               { label: 'Открыть каталог', section: 'catalog' as const, icon: Shirt },
             ].map(({ label, section, icon: Icon }) => <Button key={section} variant="outline" className="justify-start" onClick={() => { navigate(section); setQuickActionsOpen(false) }}><Icon data-icon="inline-start" />{label}</Button>)}
           </div>

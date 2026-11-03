@@ -45,8 +45,9 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
       total: count(),
       active: sql<number>`count(*) filter (where ${orders.status} not in ('Завершён', 'Отменён'))`,
       unitCount: sql<string>`coalesce(sum(${orders.quantity}), 0)::text`,
-      revenue: sql<string>`coalesce(sum(${orders.salePriceRub} * ${orders.quantity}), 0)::text`,
-      cost: sql<string>`coalesce(sum(${orders.costRub} * ${orders.quantity}), 0)::text`,
+      paidOrderCount: sql<string>`count(*) filter (where ${orders.paymentStatus} = 'Оплачен')::text`,
+      revenue: sql<string>`coalesce(sum(${orders.salePriceRub} * ${orders.quantity}) filter (where ${orders.paymentStatus} = 'Оплачен'), 0)::text`,
+      cost: sql<string>`coalesce(sum(${orders.costRub} * ${orders.quantity}) filter (where ${orders.paymentStatus} = 'Оплачен'), 0)::text`,
     }).from(orders).where(eq(orders.userId, userId)),
     db.select({ total: sql<string>`coalesce(sum(${financialTransactions.amountRub}), 0)::text` })
       .from(financialTransactions).where(eq(financialTransactions.userId, userId)),
@@ -54,7 +55,7 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
     db.select({ total: count() }).from(products).where(and(eq(products.userId, userId), eq(products.listingStatus, 'published'))),
     db.select({ createdAt: orders.createdAt, salePriceRub: orders.salePriceRub, costRub: orders.costRub, quantity: orders.quantity })
       .from(orders)
-      .where(and(eq(orders.userId, userId), gte(orders.createdAt, since)))
+      .where(and(eq(orders.userId, userId), eq(orders.paymentStatus, 'Оплачен'), gte(orders.createdAt, since)))
       .orderBy(orders.createdAt),
     db.select({ occurredAt: financialTransactions.occurredAt, amountRub: financialTransactions.amountRub })
       .from(financialTransactions)
@@ -189,6 +190,7 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
     revenueTrend,
     summary: {
       orderCount: Number(totals?.total ?? 0),
+      paidOrderCount: Number(totals?.paidOrderCount ?? 0),
       activeOrderCount: Number(totals?.active ?? 0),
       unitCount: Number(totals?.unitCount ?? 0),
       revenue,

@@ -7,7 +7,7 @@ import { ToolLoopAgent, isStepCount, tool, type ModelMessage, type ToolApprovalR
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import { db } from '@/lib/db'
-import { agentTasks, financialTransactions, orderStatusHistory, orders, products } from '@/lib/db/schema'
+import { agentTasks, financialTransactions, orderStatusHistory, orders, products, suppliers } from '@/lib/db/schema'
 import { getPersonalWorkspaceUserId } from '@/lib/personal-workspace'
 import type { AgentPendingApproval, AgentTaskPreview } from '@/components/clostore/types'
 
@@ -76,6 +76,7 @@ function responseForResult(result: Awaited<ReturnType<ReturnType<typeof createAg
   const usedTools = [...new Set(result.steps.flatMap((step) => step.toolCalls.map((call) => call.toolName)))]
   const labels: Record<string, string> = {
     searchCatalog: 'каталог',
+    listSuppliers: 'поставщики',
     listOrders: 'заказы',
     getFinancialSummary: 'финансовые показатели',
     createProductDraft: 'черновик товара',
@@ -175,6 +176,29 @@ function createAgent(userId: string) {
           })
         },
       }),
+      listSuppliers: tool({
+        description: 'Найти сохранённых поставщиков CloStore и показать только реальные поля из Neon: площадку, ссылку, статус, заметки и количество связанных товаров. Рейтинг и отзывы не выдумывай — их нет в текущей базе.',
+        inputSchema: z.object({ query: z.string().max(120).optional(), limit: z.number().int().min(1).max(20).optional() }),
+        execute: async ({ query, limit }) => {
+          const filters = [eq(suppliers.userId, userId)]
+          const normalizedQuery = query?.trim()
+          if (normalizedQuery) filters.push(or(ilike(suppliers.name, `%${normalizedQuery}%`), ilike(suppliers.platform, `%${normalizedQuery}%`))!)
+
+          return db.select({
+            name: suppliers.name,
+            platform: suppliers.platform,
+            storeUrl: suppliers.storeUrl,
+            status: suppliers.status,
+            notes: suppliers.notes,
+            productCount: count(products.id),
+          }).from(suppliers)
+            .leftJoin(products, and(eq(products.supplierId, suppliers.id), eq(products.userId, userId)))
+            .where(and(...filters))
+            .groupBy(suppliers.id, suppliers.name, suppliers.platform, suppliers.storeUrl, suppliers.status, suppliers.notes)
+            .orderBy(suppliers.name)
+            .limit(limit ?? 10)
+        },
+      }),
       listOrders: tool({
         description: 'Показать личные заказы по статусу заказа, этапу доставки или названию товара. Для вопроса о посылках в пути используй этап доставки. Не возвращает имена и контакты покупателей.',
         inputSchema: z.object({
@@ -221,7 +245,7 @@ function createAgent(userId: string) {
         execute: async () => {
           const [orderRows, expenseRows] = await Promise.all([
             db.select({ quantity: orders.quantity, salePriceRub: orders.salePriceRub, costRub: orders.costRub })
-              .from(orders).where(and(eq(orders.userId, userId), eq(orders.status, 'Завершён'))),
+              .from(orders).where(and(eq(orders.userId, userId), eq(orders.paymentStatus, 'Оплачен'))),
             db.select({ amountRub: financialTransactions.amountRub })
               .from(financialTransactions).where(eq(financialTransactions.userId, userId)),
           ])
@@ -348,6 +372,21 @@ function toTaskPreview(row: {
   }
 }
 
+export async function getAgentUsage() {
+  const userId = await getPersonalWorkspaceUserId()
+  const [totals] = await db.select({
+    taskCount: count(),
+    inputTokens: sql<string>`coalesce(sum(${agentTasks.inputTokens}), 0)::text`,
+    outputTokens: sql<string>`coalesce(sum(${agentTasks.outputTokens}), 0)::text`,
+  }).from(agentTasks).where(eq(agentTasks.userId, userId))
+
+  return {
+    taskCount: Number(totals?.taskCount ?? 0),
+    inputTokens: Number(totals?.inputTokens ?? 0),
+    outputTokens: Number(totals?.outputTokens ?? 0),
+  }
+}
+
 export async function getAgentTasks(): Promise<AgentTaskPreview[]> {
   const userId = await getPersonalWorkspaceUserId()
   const rows = await db.select({
@@ -435,6 +474,43 @@ export async function runAgentTask(rawPrompt: string) {
       .catch(() => undefined)
     return { ok: false as const, reason }
   }
+}
+
+export async function cancelAgentTask(taskId: string) {
+  if (typeof taskId !== 'string' || taskId.length > 64) return { ok: false as const, reason: 'invalid_input' as const }
+
+  const userId = await getPersonalWorkspaceUserId()
+  const [existing] = await db.select({
+    id: agentTasks.id,
+    prompt: agentTasks.prompt,
+    response: agentTasks.response,
+    status: agentTasks.status,
+    model: agentTasks.model,
+    inputTokens: agentTasks.inputTokens,
+    outputTokens: agentTasks.outputTokens,
+    createdAt: agentTasks.createdAt,
+  }).from(agentTasks)
+    .where(and(eq(agentTasks.id, taskId), eq(agentTasks.userId, userId), eq(agentTasks.status, 'awaiting_approval')))
+    .limit(1)
+
+  if (!existing) return { ok: false as const, reason: 'stale_task' as const }
+
+  const current = parseResponse(existing.response)
+  const response: StoredAgentResponse = {
+    ...current,
+    text: 'Задача отменена пользователем. Подтверждённые действия не выполнялись.',
+    pendingApprovals: [],
+  }
+  const [cancelled] = await db.update(agentTasks).set({
+    response: serializeResponse(response),
+    status: 'cancelled',
+    updatedAt: new Date(),
+  }).where(and(eq(agentTasks.id, taskId), eq(agentTasks.userId, userId), eq(agentTasks.status, 'awaiting_approval')))
+    .returning({ id: agentTasks.id })
+
+  if (!cancelled) return { ok: false as const, reason: 'stale_task' as const }
+  revalidatePath('/')
+  return { ok: true as const, task: toTaskPreview({ ...existing, response: serializeResponse(response), status: 'cancelled' }) }
 }
 
 export async function respondToAgentApprovals(

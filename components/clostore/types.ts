@@ -147,12 +147,18 @@ export type AgentPendingApproval = {
   reason?: string
 }
 
+export type AgentUsageSummary = {
+  taskCount: number
+  inputTokens: number
+  outputTokens: number
+}
+
 export type AgentTaskPreview = {
   id: string
   prompt: string
   response: string
   pendingApprovals: AgentPendingApproval[]
-  status: 'running' | 'awaiting_approval' | 'completed' | 'failed'
+  status: 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled'
   model: string
   inputTokens: number | null
   outputTokens: number | null
@@ -182,6 +188,7 @@ export type WorkspaceData = {
   revenueTrend: { month: string; revenue: number; grossProfit: number; expenses: number; profit: number }[]
   summary: {
     orderCount: number
+    paidOrderCount: number
     activeOrderCount: number
     unitCount: number
     revenue: number
