@@ -383,7 +383,7 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
                     <time dateTime={new Date(item.createdAt).toISOString()} className="shrink-0 text-[10px] text-muted-foreground">{shortDate.format(new Date(item.createdAt))}</time>
                   </span>
                 </button>
-              }) : <p className="px-3 py-8 text-center text-xs leading-5 text-muted-foreground">{tasks.length ? 'Задач по этому запросу не найдено.' : 'История появится после первого запуска.'}</p>}
+              }) : <p className="px-3 py-8 text-center text-xs leading-5 text-muted-foreground">{tasks.length ? 'Задач по этому запросу не найдено.' : 'История появится посл�� первого запуска.'}</p>}
             </CardContent>
           </Card>
 
@@ -454,7 +454,7 @@ function SearchView({ data, onNavigate }: { data: WorkspaceData; onNavigate: (se
         const result = await saveProductSearch(formData)
         setHistory((current) => [result.search, ...current.filter((search) => search.id !== result.search.id)].slice(0, 20))
         setActiveSearch(result.search)
-        setNotice('Запрос сохранён. Откройте выбранную площадку для ручного просмотра; автоматический сбор не выполняется.')
+        setNotice('Запрос сохранён. Откройте поиск Pinduoduo выше и считайте видимые карточки браузерным расширением.')
       } catch {
         setNotice('Не удалось сохранить запрос. Проверьте обязательные поля, диапазон цены и URL своего источника.')
       }
@@ -463,14 +463,14 @@ function SearchView({ data, onNavigate }: { data: WorkspaceData; onNavigate: (se
 
   return (
     <div className="space-y-5">
-      <SectionHeading title="Поиск товаров" description="Откройте официальный поиск Pinduoduo, затем импортируйте товар в очередь и создавайте публикации из шаблонов." action={<Button variant="outline" onClick={() => onNavigate('settings')}><Settings2 data-icon="inline-start" /> Источники</Button>} />
-      <div className="rounded-lg border border-sky-400/15 bg-sky-400/[0.04] p-3 text-xs leading-5 text-sky-100/75">Поиск выполняется вручную в официальном приложении или на сайте. Clostore не входит в аккаунт, не собирает данные страницы и не обходит проверки площадки.</div>
+      <SectionHeading title="Поиск товаров" description="Задайте запрос, откройте результаты Pinduoduo и добавьте видимые товары в очередь Clostore браузерным парсером." action={<Button variant="outline" onClick={() => onNavigate('settings')}><Settings2 data-icon="inline-start" /> Источники</Button>} />
+      <div className="rounded-lg border border-sky-400/15 bg-sky-400/[0.04] p-3 text-xs leading-5 text-sky-100/75">Расширение использует вашу обычную открытую страницу Pinduoduo и читает только отображённые карточки. Пароль и cookies не передаются; при CAPTCHA или блокировке сканирование останавливается.</div>
       <PinduoduoSearchPanel />
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Параметры поиска</CardTitle><p className="text-xs text-muted-foreground">Точные условия помогут сократить лишние результаты</p></CardHeader>
           <CardContent><form onSubmit={requestSearch} className="space-y-5">
             <FieldGroup className="grid gap-4 md:grid-cols-2">
-              <Field className="md:col-span-2"><FieldLabel htmlFor="search-query">Что ищем</FieldLabel><Input id="search-query" name="query" required maxLength={240} placeholder="Например, мужская куртка в стил�� archive" /></Field>
+              <Field className="md:col-span-2"><FieldLabel htmlFor="search-query">Что ищем</FieldLabel><Input id="search-query" name="query" required maxLength={240} placeholder="Например, мужская куртка в стиле archive" /></Field>
               <Field><FieldLabel htmlFor="search-category">Категория</FieldLabel><Input id="search-category" name="category" maxLength={120} placeholder="Верхняя одежда" /></Field>
               <Field><FieldLabel htmlFor="search-style">Стиль</FieldLabel><Input id="search-style" name="style" maxLength={120} placeholder="Avant-garde, archive…" /></Field>
               <Field><FieldLabel htmlFor="search-min">Цена от, CNY</FieldLabel><Input id="search-min" name="minPriceCny" type="number" min="0" step="0.01" placeholder="80" /></Field>

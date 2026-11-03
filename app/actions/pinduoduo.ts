@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { products, suppliers } from '@/lib/db/schema'
 import { getPersonalWorkspaceUserId } from '@/lib/personal-workspace'
+import { issuePinduoduoExtensionToken } from '@/lib/pinduoduo-extension-token'
 
 const importProductSchema = z.object({
   name: z.string().trim().min(2, 'Укажите название товара.').max(180),
@@ -105,4 +106,14 @@ export async function importPinduoduoProduct(input: unknown) {
 
   revalidatePath('/')
   return { ok: true as const, alreadySaved: false as const, productId }
+}
+
+export async function createPinduoduoExtensionToken() {
+  try {
+    const userId = await getPersonalWorkspaceUserId()
+    const token = issuePinduoduoExtensionToken(userId)
+    return { ok: true as const, ...token }
+  } catch {
+    return { ok: false as const, message: 'Не удалось создать временный токен импорта.' }
+  }
 }

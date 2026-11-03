@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useTransition, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
-import { ExternalLink, LoaderCircle, Search, Upload } from 'lucide-react'
-import { importPinduoduoProduct } from '@/app/actions/pinduoduo'
+import { Copy, ExternalLink, LoaderCircle, Search, Upload } from 'lucide-react'
+import { createPinduoduoExtensionToken, importPinduoduoProduct } from '@/app/actions/pinduoduo'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -49,6 +49,8 @@ export function PinduoduoSearchPanel() {
   const [sellerName, setSellerName] = useState('')
   const [salesHint, setSalesHint] = useState('')
   const [productImages, setProductImages] = useState<string[]>([])
+  const [extensionToken, setExtensionToken] = useState('')
+  const [tokenPending, setTokenPending] = useState(false)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const [pending, startTransition] = useTransition()
@@ -82,6 +84,52 @@ export function PinduoduoSearchPanel() {
 
     setError('')
     setNotice('Данные извлечены из скопированного текста. Проверьте их перед импортом.')
+  }
+
+  async function generateExtensionToken() {
+    setNotice('')
+    setError('')
+    setTokenPending(true)
+    try {
+      const result = await createPinduoduoExtensionToken()
+      if (!result.ok) {
+        setError(result.message)
+        return
+      }
+      setExtensionToken(result.token)
+      try {
+        await navigator.clipboard.writeText(result.token)
+        setNotice('Временный токен скопирован. Вставьте его в настройки расширения; он действует 15 минут.')
+      } catch {
+        setNotice('Токен создан. Скопируйте его из поля ниже; срок действия — 15 минут.')
+      }
+    } catch {
+      setError('Не удалось создать токен. Обновите страницу и попробуйте ещё раз.')
+    } finally {
+      setTokenPending(false)
+    }
+  }
+
+  async function copyAppAddress() {
+    try {
+      await navigator.clipboard.writeText(window.location.origin)
+      setNotice('Адрес Clostore скопирован. Вставьте его в настройки расширения.')
+      setError('')
+    } catch {
+      setError('Не удалось скопировать адрес приложения.')
+      setNotice('')
+    }
+  }
+
+  async function copyExtensionToken() {
+    if (!extensionToken) return
+    try {
+      await navigator.clipboard.writeText(extensionToken)
+      setNotice('Токен скопирован.')
+      setError('')
+    } catch {
+      setError('Не удалось скопировать токен. Выберите его в поле и скопируйте вручную.')
+    }
   }
 
   function handleReferencePhoto(file: File | undefined) {
@@ -134,10 +182,10 @@ export function PinduoduoSearchPanel() {
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <CardTitle id="pinduoduo-search-title">Поиск Pinduoduo</CardTitle>
-              <p className="mt-1 text-xs text-muted-foreground">Без API-ключей, входа в аккаунт или автоматических запросов к площадке.</p>
+              <CardTitle id="pinduoduo-search-title">Поиск и парсинг Pinduoduo</CardTitle>
+              <p className="mt-1 text-xs text-muted-foreground">Бесплатное расширение считывает видимые карточки в обычном браузере и добавляет их в очередь Clostore.</p>
             </div>
-            <Badge variant="outline" className="border-emerald-300/20 text-emerald-100">Ручной режим</Badge>
+            <Badge variant="outline" className="border-emerald-300/20 text-emerald-100">Браузерный парсер</Badge>
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-5">
@@ -154,6 +202,42 @@ export function PinduoduoSearchPanel() {
               <Button type="button" disabled><Search data-icon="inline-start" />Введите минимум два символа</Button>
             )}
           </form>
+
+          <div className="flex flex-col gap-3 rounded-lg border border-white/[0.07] bg-white/[0.02] p-4">
+            <div>
+              <h3 className="text-sm font-medium">Подключить бесплатный парсер браузера</h3>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">Парсер читает только отображённые карточки на текущей странице. Он не получает пароль или cookies Pinduoduo, не обращается к скрытым API и останавливается при CAPTCHA или блокировке.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <a href="/pinduoduo-parser-extension.zip" download className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+                Скачать расширение Chrome
+              </a>
+              <Button type="button" variant="outline" size="sm" onClick={copyAppAddress}>
+                <Copy data-icon="inline-start" />Скопировать адрес Clostore
+              </Button>
+              <Button type="button" size="sm" onClick={generateExtensionToken} disabled={tokenPending}>
+                {tokenPending ? <LoaderCircle data-icon="inline-start" className="animate-spin" /> : <Copy data-icon="inline-start" />}
+                Создать токен импорта
+              </Button>
+            </div>
+            {extensionToken && (
+              <Field>
+                <FieldLabel htmlFor="pdd-extension-token">Временный токен (действует 15 минут)</FieldLabel>
+                <div className="flex gap-2">
+                  <Input id="pdd-extension-token" type="password" value={extensionToken} readOnly autoComplete="off" />
+                  <Button type="button" variant="outline" onClick={copyExtensionToken} aria-label="Скопировать временный токен">
+                    <Copy data-icon="inline-start" />
+                  </Button>
+                </div>
+              </Field>
+            )}
+            <ol className="flex flex-col gap-1 text-xs leading-5 text-muted-foreground">
+              <li>1. Распакуйте ZIP и загрузите папку в Chrome через «Расширения» → «Режим разработчика» → «Загрузить распакованное».</li>
+              <li>2. В расширении укажите адрес Clostore и временный токен из этого окна.</li>
+              <li>3. Откройте поиск Pinduoduo выше, нажмите значок расширения и выберите «Считать товары с этой страницы».</li>
+              <li>4. Спросите AI-агента о товарах Pinduoduo — он найдёт импортированные черновики в каталоге.</li>
+            </ol>
+          </div>
 
           <div className="grid gap-4 border-t border-white/[0.06] pt-4 lg:grid-cols-[minmax(0,1fr)_minmax(250px,0.8fr)]">
             <div className="flex flex-col gap-3">
@@ -191,8 +275,8 @@ export function PinduoduoSearchPanel() {
 
       <Card className="border-white/[0.07] bg-card/80 shadow-none">
         <CardHeader>
-          <CardTitle>Импорт товара по ссылке</CardTitle>
-          <p className="text-xs leading-5 text-muted-foreground">Парсер обрабатывает только текст, который вы сами скопировали. Clostore не открывает страницу товара и не читает данные аккаунта.</p>
+          <CardTitle>Ручной импорт по ссылке</CardTitle>
+          <p className="text-xs leading-5 text-muted-foreground">Запасной способ, если браузерное расширение не распознало карточку. Импорт создаёт черновик для проверки.</p>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <Field>

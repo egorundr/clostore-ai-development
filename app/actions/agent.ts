@@ -114,6 +114,7 @@ function createAgent(userId: string) {
     instructions: [
       'Ты — AI-помощник личного fashion-магазина CloStore. Отвечай по-русски, структурно и кратко.',
       'Для вопросов о товарах, заказах и финансах используй инструменты. Факты и расчёты сообщай только на основе их результатов; арифметику выполняет код.',
+      'Товары, импортированные браузерным парсером Pinduoduo, становятся черновиками в каталоге. Для поиска таких товаров используй searchCatalog с source Pinduoduo. Не утверждай, что агент сам видит страницы Pinduoduo.',
       'Для многошаговых задач последовательно используй доступные инструменты и кратко объясняй, что проверено.',
       'Создание черновика товара, изменение статуса заказа и запись расхода требуют явного подтверждения пользователя. Не утверждай, что действие выполнено, пока пользователь не подтвердил его и инструмент не вернул результат.',
       'После отказа не повторяй это действие. Если не хватает данных, задай уточняющий вопрос вместо того, чтобы выдумывать значения.',
@@ -132,13 +133,14 @@ function createAgent(userId: string) {
     },
     tools: {
       searchCatalog: tool({
-        description: 'Найти товары в личном каталоге CloStore по названию и необязательному статусу. Используй для вопросов о сохранённых товарах.',
+        description: 'Найти товары в личном каталоге CloStore по названию, источнику Pinduoduo и необязательному статусу. Используй для вопросов о сохранённых или только что разобранных товарах.',
         inputSchema: z.object({
           query: z.string().max(120).optional().describe('Часть названия или категории товара'),
           status: z.enum(['active', 'review', 'draft', 'rejected']).optional().describe('Фильтр по внутреннему статусу товара'),
+          source: z.enum(['Pinduoduo']).optional().describe('Фильтр по источнику товара'),
           limit: z.number().int().min(1).max(12).optional(),
         }),
-        execute: async ({ query, status, limit }) => {
+        execute: async ({ query, status, source, limit }) => {
           const filters = [eq(products.userId, userId)]
           const normalizedQuery = query?.trim()
           if (normalizedQuery) filters.push(or(
@@ -146,6 +148,7 @@ function createAgent(userId: string) {
             ilike(products.category, `%${normalizedQuery}%`),
           )!)
           if (status) filters.push(eq(products.status, status))
+          if (source) filters.push(eq(products.source, source))
 
           const rows = await db.select({
             name: products.name,

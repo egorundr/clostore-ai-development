@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Clostore Pinduoduo Parser",
+  "version": "1.0.0",
+  "description": "Считывает видимые карточки товаров Pinduoduo по команде пользователя и добавляет их в Clostore.",
+  "minimum_chrome_version": "114",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+  "action": {
+    "default_title": "Clostore Pinduoduo Parser",
+    "default_popup": "popup.html"
+  }
+}
