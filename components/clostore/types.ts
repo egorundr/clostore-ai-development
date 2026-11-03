@@ -168,9 +168,17 @@ export type IntegrationStatus = {
 
 export type AgentPendingApproval = {
   approvalId: string
-  toolName: 'createProductDraft' | 'updateProductCard' | 'updateOrderStatus' | 'recordExpense'
+  toolName: 'createProductDraft' | 'updateProductCard' | 'updateOrderStatus' | 'recordExpense' | 'requestPinduoduoBrowserSearch'
   input: Record<string, unknown>
   reason?: string
+}
+
+export type AgentBrowserCommand = {
+  id: string
+  type: 'pinduoduo_search'
+  query: string
+  state: 'queued' | 'running' | 'completed'
+  requestedAt: string
 }
 
 export type AgentUsageSummary = {
@@ -184,7 +192,8 @@ export type AgentTaskPreview = {
   prompt: string
   response: string
   pendingApprovals: AgentPendingApproval[]
-  status: 'running' | 'awaiting_approval' | 'completed' | 'failed' | 'cancelled'
+  browserCommand: AgentBrowserCommand | null
+  status: 'running' | 'awaiting_approval' | 'awaiting_browser' | 'browser_running' | 'completed' | 'failed' | 'cancelled'
   model: string
   inputTokens: number | null
   outputTokens: number | null

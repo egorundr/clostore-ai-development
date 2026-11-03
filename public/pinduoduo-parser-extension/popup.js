@@ -5,6 +5,12 @@ const queryInput = document.querySelector('#search-query')
 const openSearchButton = document.querySelector('#open-search')
 const scanButton = document.querySelector('#scan-page')
 const statusElement = document.querySelector('#status')
+const checkAgentCommandButton = document.querySelector('#check-agent-command')
+const agentCommandCard = document.querySelector('#agent-command-card')
+const agentCommandQuery = document.querySelector('#agent-command-query')
+const openAgentSearchButton = document.querySelector('#open-agent-search')
+const sendAgentResultsButton = document.querySelector('#send-agent-results')
+let activeBrowserCommand = null
 
 function setStatus(message, tone = '') {
   statusElement.textContent = message
@@ -29,10 +35,38 @@ function isPinduoduoUrl(value) {
   }
 }
 
+function showAgentCommand(command) {
+  activeBrowserCommand = command
+  agentCommandCard.hidden = !command
+  agentCommandQuery.textContent = command?.query || ''
+}
+
 async function loadConnection() {
-  const { appOrigin = '', token = '' } = await chrome.storage.session.get(['appOrigin', 'token'])
+  const { appOrigin = '', token = '', browserCommand = null } = await chrome.storage.session.get(['appOrigin', 'token', 'browserCommand'])
   appOriginInput.value = appOrigin
   tokenInput.value = token
+  if (browserCommand?.taskId && browserCommand?.commandId && browserCommand?.query) showAgentCommand(browserCommand)
+}
+
+async function postAgentCommand(payload) {
+  const { appOrigin, token } = await chrome.storage.session.get(['appOrigin', 'token'])
+  if (!appOrigin || !token) throw new Error('Сначала сохраните адрес Clostore и временный токен.')
+
+  const response = await fetch(`${appOrigin}/api/pinduoduo/agent-command`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+  const result = await response.json().catch(() => null)
+  if (!response.ok || !result?.ok) throw new Error(result?.reason === 'stale_command'
+    ? 'Эта команда уже обработана. Обновите задачу в Clostore.'
+    : result?.reason === 'not_authorized'
+      ? 'Токен истёк или не имеет доступа к командам. Создайте новый в Clostore.'
+      : 'Clostore не принял команду. Проверьте подключение и обновите токен.')
+  return result
 }
 
 connectButton.addEventListener('click', async () => {
@@ -142,6 +176,83 @@ scanButton.addEventListener('click', async () => {
   } finally {
     scanButton.disabled = false
     scanButton.textContent = originalText
+  }
+})
+
+checkAgentCommandButton.addEventListener('click', async () => {
+  checkAgentCommandButton.disabled = true
+  try {
+    const result = await postAgentCommand({ action: 'claim' })
+    if (!result.command) {
+      await chrome.storage.session.remove('browserCommand')
+      showAgentCommand(null)
+      setStatus('Нет подтверждённых команд AI-агента. Сначала отправьте запрос в Clostore и подтвердите поиск.', 'success')
+      return
+    }
+
+    activeBrowserCommand = result.command
+    await chrome.storage.session.set({ browserCommand: activeBrowserCommand })
+    showAgentCommand(activeBrowserCommand)
+    setStatus('Команда получена. Откройте поиск вручную, затем вернитесь на страницу результатов и отправьте видимые товары.', 'success')
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : 'Не удалось проверить команды Clostore.', 'error')
+  } finally {
+    checkAgentCommandButton.disabled = false
+  }
+})
+
+openAgentSearchButton.addEventListener('click', async () => {
+  if (!activeBrowserCommand?.query) return
+  const searchUrl = new URL('https://mobile.yangkeduo.com/search_result.html')
+  searchUrl.searchParams.set('search_key', activeBrowserCommand.query)
+  await chrome.tabs.create({ url: searchUrl.toString(), active: true })
+  setStatus('Поиск открыт в новой вкладке. Когда результаты загрузятся, нажмите «Передать видимые товары агенту».', 'success')
+})
+
+sendAgentResultsButton.addEventListener('click', async () => {
+  if (!activeBrowserCommand?.taskId || !activeBrowserCommand?.commandId) return
+  sendAgentResultsButton.disabled = true
+  const originalText = sendAgentResultsButton.textContent
+  sendAgentResultsButton.textContent = 'Передача агенту…'
+
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+    if (!tab?.id || !tab.url || !isPinduoduoUrl(tab.url)) {
+      setStatus('Откройте страницу результатов Pinduoduo в активной вкладке.', 'error')
+      return
+    }
+
+    const [injection] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: extractVisibleProducts,
+    })
+    const scan = injection?.result
+    if (!scan || scan.status === 'unavailable') {
+      setStatus('Не удалось прочитать открытую страницу Pinduoduo.', 'error')
+      return
+    }
+    if (scan.status === 'challenge') {
+      setStatus('Обнаружена CAPTCHA или проверка. Передача остановлена; автоматического продолжения нет.', 'error')
+      return
+    }
+
+    const result = await postAgentCommand({
+      action: 'complete',
+      taskId: activeBrowserCommand.taskId,
+      commandId: activeBrowserCommand.commandId,
+      products: scan.products || [],
+    })
+    await chrome.storage.session.remove('browserCommand')
+    showAgentCommand(null)
+    const task = result.task
+    setStatus(task
+      ? `Результат передан агенту.\n\n${task.response}${task.pendingApprovals?.length ? `\n\nПодготовлено действий: ${task.pendingApprovals.length}. Подтвердите их в разделе AI-агент.` : ''}`
+      : 'Результат передан агенту. Обновите задачу в Clostore.', 'success')
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : 'Не удалось передать результаты агенту.', 'error')
+  } finally {
+    sendAgentResultsButton.disabled = false
+    sendAgentResultsButton.textContent = originalText
   }
 })
 

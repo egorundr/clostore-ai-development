@@ -4,16 +4,27 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
 
 const tokenTtlSeconds = 15 * 60
-const claimsSchema = z.object({
-  version: z.literal(1),
-  audience: z.literal('clostore-pinduoduo-import'),
-  scope: z.literal('products:import'),
-  userId: z.string().min(1).max(120),
-  expiresAt: z.number().int().positive(),
-  nonce: z.string().uuid(),
-})
+const claimsSchema = z.union([
+  z.object({
+    version: z.literal(1),
+    audience: z.literal('clostore-pinduoduo-import'),
+    scope: z.literal('products:import'),
+    userId: z.string().min(1).max(120),
+    expiresAt: z.number().int().positive(),
+    nonce: z.string().uuid(),
+  }),
+  z.object({
+    version: z.literal(2),
+    audience: z.literal('clostore-pinduoduo-import'),
+    scopes: z.array(z.enum(['products:import', 'browser:commands'])).min(1).max(2),
+    userId: z.string().min(1).max(120),
+    expiresAt: z.number().int().positive(),
+    nonce: z.string().uuid(),
+  }),
+])
 
 type TokenClaims = z.infer<typeof claimsSchema>
+export type PinduoduoExtensionScope = 'products:import' | 'browser:commands'
 
 function getSecret() {
   const secret = process.env.BETTER_AUTH_SECRET?.trim()
@@ -27,9 +38,9 @@ function sign(value: string) {
 
 export function issuePinduoduoExtensionToken(userId: string) {
   const claims: TokenClaims = {
-    version: 1,
+    version: 2,
     audience: 'clostore-pinduoduo-import',
-    scope: 'products:import',
+    scopes: ['products:import', 'browser:commands'],
     userId,
     expiresAt: Math.floor(Date.now() / 1000) + tokenTtlSeconds,
     nonce: randomUUID(),
@@ -38,6 +49,10 @@ export function issuePinduoduoExtensionToken(userId: string) {
   const signature = sign(payload).toString('base64url')
 
   return { token: `${payload}.${signature}`, expiresAt: claims.expiresAt * 1000 }
+}
+
+export function hasPinduoduoExtensionScope(claims: TokenClaims, scope: PinduoduoExtensionScope) {
+  return claims.version === 1 ? scope === 'products:import' : claims.scopes.includes(scope)
 }
 
 export function verifyPinduoduoExtensionToken(token: string) {

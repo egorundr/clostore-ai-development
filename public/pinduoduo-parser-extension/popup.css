@@ -151,3 +151,33 @@ textarea {
 .status[data-tone="success"] {
   color: #b4e2bc;
 }
+
+.command-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 10px;
+  border: 1px solid #46574a;
+  border-radius: 9px;
+  background: #1c251e;
+}
+
+.command-card[hidden] {
+  display: none;
+}
+
+.command-label {
+  color: #a9c5ad;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.command-query {
+  overflow-wrap: anywhere;
+  color: #f1f3ef;
+  font-size: 12px;
+  line-height: 1.5;
+}

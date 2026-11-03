@@ -196,7 +196,7 @@ export function PinduoduoSearchPanel() {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <CardTitle id="pinduoduo-search-title">Поиск и парсинг Pinduoduo</CardTitle>
-              <p className="mt-1 text-xs text-muted-foreground">Бесплатное расширение считывает видимые карточки в обычном браузере и добавляет их в очередь Clostore.</p>
+              <p className="mt-1 text-xs text-muted-foreground">Расширение считывает видимые карточки и может выполнить подтверждённый AI-агентом поиск. Страницы открываются и сканируются только после вашего нажатия.</p>
             </div>
             <Badge variant="outline" className="border-emerald-300/20 text-emerald-100">Браузерный парсер</Badge>
           </div>
@@ -249,6 +249,7 @@ export function PinduoduoSearchPanel() {
               <li>2. В расширении укажите адрес Clostore и временный токен из этого окна.</li>
               <li>3. Откройте поиск Pinduoduo выше, нажмите значок расширения и выберите «Считать товары с этой страницы».</li>
               <li>4. После импорта агент автоматически составит отчёт и подготовит предложения для карточек. Подтвердите изменения в разделе AI-агент.</li>
+              <li>5. Для поиска по запросу агента откройте его подтверждённую команду в popup расширения. Результаты отправляются агенту только после отдельного нажатия.</li>
             </ol>
           </div>
 

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createPinduoduoImportReport, importPinduoduoProduct } from '@/app/actions/pinduoduo'
 import { getPersonalWorkspaceUserId } from '@/lib/personal-workspace'
-import { verifyPinduoduoExtensionToken } from '@/lib/pinduoduo-extension-token'
+import { hasPinduoduoExtensionScope, verifyPinduoduoExtensionToken } from '@/lib/pinduoduo-extension-token'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
   if (!claims) return NextResponse.json({ ok: false, message: 'Invalid or expired import token.' }, { status: 401 })
 
   const ownerId = await getPersonalWorkspaceUserId()
-  if (claims.userId !== ownerId || claims.audience !== 'clostore-pinduoduo-import' || claims.scope !== 'products:import') {
+  if (claims.userId !== ownerId || claims.audience !== 'clostore-pinduoduo-import' || !hasPinduoduoExtensionScope(claims, 'products:import')) {
     return NextResponse.json({ ok: false, message: 'Import token is not authorized.' }, { status: 403 })
   }
 

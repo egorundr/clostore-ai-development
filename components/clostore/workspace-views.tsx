@@ -18,6 +18,7 @@ import {
   MoreHorizontal,
   Package,
   Plus,
+  RefreshCw,
   Search,
   Send,
   Settings2,
@@ -62,7 +63,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Separator } from '@/components/ui/separator'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
-import { cancelAgentTask, respondToAgentApprovals, runAgentTask } from '@/app/actions/agent'
+import { cancelAgentTask, getAgentTasks, respondToAgentApprovals, runAgentTask } from '@/app/actions/agent'
 import { publishTelegramPublication, saveTelegramPublication, testTelegramConnection } from '@/app/actions/integrations'
 import { saveProductSearch, updateProductPricing } from '@/app/actions/workspace'
 import { PinduoduoSearchPanel } from './pinduoduo-search-panel'
@@ -132,6 +133,13 @@ function approvalDetails(approval: AgentTaskPreview['pendingApprovals'][number])
       ['Новый статус', show(input.status)],
     ]
   }
+  if (approval.toolName === 'requestPinduoduoBrowserSearch') {
+    return [
+      ['Запрос поиска', show(input.query)],
+      ['Что произойдёт', 'Откроется поиск Pinduoduo только после нажатия в расширении'],
+      ['Передача результатов', 'Только видимые карточки после отдельного подтверждения в расширении'],
+    ]
+  }
   return [
     ['Категория', show(input.category)],
     ['Сумма', input.amountRub == null ? '—' : formatRub(Number(input.amountRub))],
@@ -143,6 +151,7 @@ function approvalTitle(toolName: AgentTaskPreview['pendingApprovals'][number]['t
   if (toolName === 'createProductDraft') return 'Создать черновик товара'
   if (toolName === 'updateProductCard') return 'Подготовить карточку товара'
   if (toolName === 'updateOrderStatus') return 'Изменить статус заказа'
+  if (toolName === 'requestPinduoduoBrowserSearch') return 'Запустить поиск Pinduoduo'
   return 'Добавить расход'
 }
 
@@ -150,6 +159,8 @@ function agentTaskStatusLabel(status: string) {
   if (status === 'completed') return 'Готово'
   if (status === 'running') return 'В работе'
   if (status === 'awaiting_approval') return 'Нужно решение'
+  if (status === 'awaiting_browser') return 'Ждёт браузер'
+  if (status === 'browser_running') return 'Браузер открыт'
   if (status === 'cancelled') return 'Отменена'
   return 'Ошибка'
 }
@@ -158,6 +169,7 @@ function agentTaskStatusClass(status: string) {
   if (status === 'completed') return 'border-emerald-300/20 bg-emerald-300/[0.07] text-emerald-100'
   if (status === 'running') return 'border-sky-300/20 bg-sky-300/[0.07] text-sky-100'
   if (status === 'awaiting_approval') return 'border-amber-300/20 bg-amber-300/[0.07] text-amber-100'
+  if (status === 'awaiting_browser' || status === 'browser_running') return 'border-violet-300/20 bg-violet-300/[0.07] text-violet-100'
   return 'border-white/10 bg-white/[0.03] text-muted-foreground'
 }
 
@@ -168,8 +180,9 @@ function AgentView({ initialTasks, products, templates, onNavigate }: { initialT
   const [historyQuery, setHistoryQuery] = useState('')
   const [error, setError] = useState('')
   const [pending, startTransition] = useTransition()
+  const [refreshing, setRefreshing] = useState(false)
   const composerRef = useRef<HTMLTextAreaElement>(null)
-  const suggestions = ['Покажи активные товары в каталоге', 'Какие заказы сейчас в пути?', 'Составь отчёт по товарам Pinduoduo и подготовь карточки', 'Создай черновик товара из моего описания']
+  const suggestions = ['Покажи активные товары в каталоге', 'Какие заказы сейчас в пути?', 'Найди похожие товары на Pinduoduo', 'Составь отчёт по товарам Pinduoduo и подготовь карточки', 'Создай черновик товара из моего описания']
   const activeTask = selectedTaskId ? tasks.find((item) => item.id === selectedTaskId) ?? tasks[0] : undefined
   const filteredTasks = useMemo(() => {
     const query = historyQuery.trim().toLocaleLowerCase('ru-RU')
@@ -230,8 +243,26 @@ function AgentView({ initialTasks, products, templates, onNavigate }: { initialT
     })
   }
 
+  async function refreshAgentTasks() {
+    if (pending || refreshing) return
+    setError('')
+    setRefreshing(true)
+    try {
+      const latestTasks = await getAgentTasks()
+      setTasks(latestTasks)
+      if (selectedTaskId && !latestTasks.some((item) => item.id === selectedTaskId)) {
+        setSelectedTaskId(latestTasks[0]?.id ?? null)
+      }
+    } catch {
+      setError('Не удалось обновить историю задач.')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   function cancelPendingTask() {
-    if (!activeTask?.pendingApprovals.length || pending) return
+    const canCancelBrowserTask = activeTask?.status === 'awaiting_browser' || activeTask?.status === 'browser_running'
+    if ((!activeTask?.pendingApprovals.length && !canCancelBrowserTask) || pending || !activeTask) return
     setError('')
     startTransition(async () => {
       try {
@@ -313,10 +344,26 @@ function AgentView({ initialTasks, products, templates, onNavigate }: { initialT
                             <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">{approvalDetails(approval).map(([label, value]) => <div key={label} className="contents"><dt className="text-muted-foreground">{label}</dt><dd className="break-words text-right">{value}</dd></div>)}</dl>
                           </div>)}
                           <div className="flex flex-wrap gap-2">
-                            <Button type="button" disabled={pending} onClick={() => decideApprovals(true)}><Check data-icon="inline-start" />{pending ? 'Выполняю…' : 'Подтвердить изменения'}</Button>
+                            <Button type="button" disabled={pending} onClick={() => decideApprovals(true)}><Check data-icon="inline-start" />{pending ? 'Выполняю…' : activeTask.pendingApprovals.some((approval) => approval.toolName === 'requestPinduoduoBrowserSearch') ? 'Подтвердить поиск' : 'Подтвердить изменения'}</Button>
                             <Button type="button" variant="outline" disabled={pending} onClick={() => decideApprovals(false)}><X data-icon="inline-start" />Отклонить</Button>
                             <Button type="button" variant="ghost" disabled={pending} onClick={cancelPendingTask}>Отменить задачу</Button>
                           </div>
+                        </CardContent>
+                      </Card>
+                    </MessageScrollerItem>}
+                    {activeTask.browserCommand && (activeTask.status === 'awaiting_browser' || activeTask.status === 'browser_running') && <MessageScrollerItem messageId={`${activeTask.id}-browser-command`}>
+                      <Card className="ml-10 max-w-2xl border-violet-300/20 bg-violet-300/[0.04] shadow-none">
+                        <CardHeader className="gap-1.5">
+                          <CardTitle className="flex items-center gap-2 text-sm"><Search className="text-violet-200" />Нужно действие в браузере</CardTitle>
+                          <p className="text-xs text-muted-foreground">Команда уже подтверждена. Расширение не открывает страницы и не сканирует их автоматически.</p>
+                        </CardHeader>
+                        <CardContent className="flex flex-col gap-3">
+                          <div className="rounded-lg border border-white/[0.08] bg-background/50 p-3">
+                            <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Поисковый запрос</p>
+                            <p className="mt-1 break-words text-sm">{activeTask.browserCommand.query}</p>
+                          </div>
+                          <p className="text-xs leading-5 text-muted-foreground">Откройте расширение Pinduoduo, нажмите «Проверить очередь агента», вручную откройте поиск, затем вернитесь на страницу результатов и нажмите «Передать видимые товары агенту».</p>
+                          <Button type="button" variant="outline" className="self-start" disabled={pending} onClick={cancelPendingTask}>Отменить задачу</Button>
                         </CardContent>
                       </Card>
                     </MessageScrollerItem>}
@@ -377,7 +424,12 @@ function AgentView({ initialTasks, products, templates, onNavigate }: { initialT
                   <History className="shrink-0 text-muted-foreground" />
                   <div className="min-w-0"><CardTitle>История задач</CardTitle><p className="mt-1 text-xs text-muted-foreground">Последние 20 запусков</p></div>
                 </div>
-                <Badge variant="secondary" className="tabular-nums">{tasks.length}</Badge>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button type="button" variant="ghost" size="icon-sm" disabled={pending || refreshing} onClick={refreshAgentTasks} aria-label="Обновить историю задач">
+                    <RefreshCw className={refreshing ? 'animate-spin' : ''} />
+                  </Button>
+                  <Badge variant="secondary" className="tabular-nums">{tasks.length}</Badge>
+                </div>
               </div>
               <div className="relative">
                 <Search aria-hidden="true" className="absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" />
@@ -408,14 +460,14 @@ function AgentView({ initialTasks, products, templates, onNavigate }: { initialT
             <CardContent className="flex flex-col gap-4 text-xs leading-5 text-muted-foreground">
               <div>
                 <p className="font-medium text-foreground">Доступно агенту</p>
-                <div className="mt-2 flex flex-wrap gap-1.5"><Badge variant="secondary"><Package data-icon="inline-start" />Каталог</Badge><Badge variant="secondary"><Truck data-icon="inline-start" />Заказы</Badge><Badge variant="secondary"><Wallet data-icon="inline-start" />Финансы</Badge></div>
+                <div className="mt-2 flex flex-wrap gap-1.5"><Badge variant="secondary"><Package data-icon="inline-start" />Каталог</Badge><Badge variant="secondary"><Truck data-icon="inline-start" />Заказы</Badge><Badge variant="secondary"><Wallet data-icon="inline-start" />Финансы</Badge><Badge variant="secondary"><Search data-icon="inline-start" />Pinduoduo через браузер</Badge></div>
               </div>
               <Separator className="bg-white/[0.06]" />
               <div className="flex items-start gap-2.5">
                 <CheckCircle2 className="mt-0.5 shrink-0 text-emerald-200" />
                 <div><p className="font-medium text-foreground">Изменения под контролем</p><p className="mt-1">Создание и редактирование карточек, обновление статусов и расходы — только после вашего подтверждения.</p></div>
               </div>
-              <p>Контакты покупателей не передаются. Telegram, Avito, закупки и интернет-поиск пока не подключены.</p>
+              <p>Контакты покупателей не передаются. Поиск на Pinduoduo выполняется только через ваше расширение и только после подтверждения.</p>
             </CardContent>
           </Card>
         </aside>
@@ -474,14 +526,14 @@ function SearchView({ data, onNavigate }: { data: WorkspaceData; onNavigate: (se
 
   return (
     <div className="space-y-5">
-      <SectionHeading title="Поиск товаров" description="Задайте запрос, откройте результаты Pinduoduo и добавьте видимые товары в очередь Clostore браузерным парсером." action={<Button variant="outline" onClick={() => onNavigate('settings')}><Settings2 data-icon="inline-start" /> Источники</Button>} />
+      <SectionHeading title="Поиск товаров" description="Задайте запрос, откройте результаты Pinduoduo и добавьте видимые товары в очередь Clostore браузерным парсе��ом." action={<Button variant="outline" onClick={() => onNavigate('settings')}><Settings2 data-icon="inline-start" /> Источники</Button>} />
       <div className="rounded-lg border border-sky-400/15 bg-sky-400/[0.04] p-3 text-xs leading-5 text-sky-100/75">Расширение использует вашу обычную открытую страницу Pinduoduo и читает только отображённые карточки. Пароль и cookies не передаются; при CAPTCHA или блокировке сканирование останавливается.</div>
       <PinduoduoSearchPanel />
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Параметры поиска</CardTitle><p className="text-xs text-muted-foreground">Точные условия помогут сократить лишние результаты</p></CardHeader>
           <CardContent><form onSubmit={requestSearch} className="space-y-5">
             <FieldGroup className="grid gap-4 md:grid-cols-2">
-              <Field className="md:col-span-2"><FieldLabel htmlFor="search-query">Что ищем</FieldLabel><Input id="search-query" name="query" required maxLength={240} placeholder="Например, мужская куртка в стиле archive" /></Field>
+              <Field className="md:col-span-2"><FieldLabel htmlFor="search-query">Что ��щем</FieldLabel><Input id="search-query" name="query" required maxLength={240} placeholder="Например, мужская куртка в стиле archive" /></Field>
               <Field><FieldLabel htmlFor="search-category">Категория</FieldLabel><Input id="search-category" name="category" maxLength={120} placeholder="Верхняя одежда" /></Field>
               <Field><FieldLabel htmlFor="search-style">Стиль</FieldLabel><Input id="search-style" name="style" maxLength={120} placeholder="Avant-garde, archive…" /></Field>
               <Field><FieldLabel htmlFor="search-min">Цена от, CNY</FieldLabel><Input id="search-min" name="minPriceCny" type="number" min="0" step="0.01" placeholder="80" /></Field>
@@ -536,7 +588,7 @@ function ReviewQueueView() {
 
   return <div className="space-y-5"><SectionHeading title="Очередь проверки" description="Проверьте найденные товары перед добавлением в каталог." action={<Badge variant="outline" className="w-fit border-white/10">{items.length} на рассмотрении</Badge>} /><DemoNotice />
     {message && <p role="status" className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-xs text-muted-foreground">{message}</p>}
-    {items.length === 0 ? <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardContent className="py-16 text-center"><CheckCircle2 className="mx-auto text-muted-foreground" /><p className="mt-3 font-medium">Очередь разобрана</p><p className="mt-1 text-sm text-muted-foreground">Решения по {resolved.length} демо-карточкам не сохраняются после обновления страницы.</p></CardContent></Card> : <div className="grid gap-4 lg:grid-cols-2">{items.map((product) => <ReviewProductCard key={product.id} product={product} onResolve={resolve} />)}</div>}
+    {items.length === 0 ? <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardContent className="py-16 text-center"><CheckCircle2 className="mx-auto text-muted-foreground" /><p className="mt-3 font-medium">Очере��ь разобрана</p><p className="mt-1 text-sm text-muted-foreground">Решения по {resolved.length} демо-карточкам не сохраняются после обновления страницы.</p></CardContent></Card> : <div className="grid gap-4 lg:grid-cols-2">{items.map((product) => <ReviewProductCard key={product.id} product={product} onResolve={resolve} />)}</div>}
   </div>
 }
 
