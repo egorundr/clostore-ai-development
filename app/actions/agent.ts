@@ -1,17 +1,352 @@
 'use server'
 
 import { randomUUID } from 'node:crypto'
-import { and, count, desc, eq, gte, sql } from 'drizzle-orm'
-import { generateText, gateway } from 'ai'
+import { and, count, desc, eq, gte, ilike, or, sql } from 'drizzle-orm'
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
+import { ToolLoopAgent, isStepCount, tool, type ModelMessage, type ToolApprovalResponse } from 'ai'
+import { z } from 'zod'
+import { revalidatePath } from 'next/cache'
 import { db } from '@/lib/db'
-import { agentTasks } from '@/lib/db/schema'
+import { agentTasks, financialTransactions, orderStatusHistory, orders, products } from '@/lib/db/schema'
 import { getPersonalWorkspaceUserId } from '@/lib/personal-workspace'
-import type { AgentTaskPreview } from '@/components/clostore/types'
+import type { AgentPendingApproval, AgentTaskPreview } from '@/components/clostore/types'
 
-const MODEL_ID = 'deepseek/deepseek-v4.1-flash'
+const MODEL_ID = process.env.DEEPSEEK_MODEL?.trim() || 'deepseek-flash'
 const MAX_PROMPT_LENGTH = 4000
 const HISTORY_LIMIT = 20
 const MAX_TASKS_PER_HOUR = 10
+const MAX_AGENT_STEPS = 6
+
+const approvalSchema = z.object({
+  approvalId: z.string().min(1).max(200),
+  toolName: z.enum(['createProductDraft', 'updateOrderStatus', 'recordExpense']),
+  input: z.record(z.string(), z.unknown()),
+  reason: z.string().max(500).optional(),
+})
+
+const storedResponseSchema = z.object({
+  format: z.literal('clostore-agent-v1'),
+  text: z.string(),
+  messages: z.array(z.unknown()),
+  pendingApprovals: z.array(approvalSchema),
+})
+
+type StoredAgentResponse = {
+  format: 'clostore-agent-v1'
+  text: string
+  messages: ModelMessage[]
+  pendingApprovals: AgentPendingApproval[]
+}
+
+function serializeResponse(response: StoredAgentResponse) {
+  return JSON.stringify(response)
+}
+
+function parseResponse(value: string): StoredAgentResponse {
+  try {
+    const result = storedResponseSchema.safeParse(JSON.parse(value))
+    if (result.success) {
+      return {
+        ...result.data,
+        messages: result.data.messages as ModelMessage[],
+        pendingApprovals: result.data.pendingApprovals as AgentPendingApproval[],
+      }
+    }
+  } catch {
+    // Older task rows store the response as plain text.
+  }
+
+  return { format: 'clostore-agent-v1', text: value, messages: [], pendingApprovals: [] }
+}
+
+function responseForResult(result: Awaited<ReturnType<ReturnType<typeof createAgent>['generate']>>, messages: ModelMessage[]): StoredAgentResponse {
+  const pendingApprovals = result.content.flatMap((part) => {
+    if (part.type !== 'tool-approval-request' || part.isAutomatic) return []
+    const toolCall = part.toolCall
+    if (!['createProductDraft', 'updateOrderStatus', 'recordExpense'].includes(toolCall.toolName)) return []
+    if (!toolCall.input || typeof toolCall.input !== 'object' || Array.isArray(toolCall.input)) return []
+
+    return [{
+      approvalId: part.approvalId,
+      toolName: toolCall.toolName as AgentPendingApproval['toolName'],
+      input: toolCall.input as Record<string, unknown>,
+      ...(part.reason ? { reason: part.reason } : {}),
+    }]
+  })
+  const usedTools = [...new Set(result.steps.flatMap((step) => step.toolCalls.map((call) => call.toolName)))]
+  const labels: Record<string, string> = {
+    searchCatalog: 'каталог',
+    listOrders: 'заказы',
+    getFinancialSummary: 'финансовые показатели',
+    createProductDraft: 'черновик товара',
+    updateOrderStatus: 'статус заказа',
+    recordExpense: 'расходы',
+  }
+  const suffix = usedTools.length
+    ? `\n\nПроверено по данным приложения: ${usedTools.map((name) => labels[name] ?? name).join(', ')}.`
+    : ''
+  const text = result.text.trim() || (pendingApprovals.length
+    ? 'Подготовил действие. Проверьте детали и подтвердите его ниже, чтобы продолжить.'
+    : 'Задача выполнена.')
+
+  return {
+    format: 'clostore-agent-v1',
+    text: `${text}${suffix}`,
+    messages: [...messages, ...result.responseMessages],
+    pendingApprovals,
+  }
+}
+
+function createAgent(userId: string) {
+  const apiKey = process.env.DEEPSEEK_API_KEY?.trim()
+  if (!apiKey) throw new Error('deepseek_api_key_missing')
+  const deepseek = createOpenAICompatible({
+    name: 'deepseek',
+    baseURL: 'https://api.deepseek.com',
+    apiKey,
+  })
+  const orderStatuses = ['Ожидает оплаты', 'Ожидает закупки', 'Заказан у поставщика', 'В пути', 'Прибыл', 'Завершён', 'Отменён', 'Проблема / возврат'] as const
+  const expenseCategories = ['Упаковка', 'Доставка', 'Комиссии', 'Реклама', 'Подписки и сервисы', 'Прочее'] as const
+
+  return new ToolLoopAgent({
+    model: deepseek.chatModel(MODEL_ID),
+    instructions: [
+      'Ты — AI-помощник личного fashion-магазина CloStore. Отвечай по-русски, структурно и кратко.',
+      'Для вопросов о товарах, заказах и финансах используй инструменты. Факты и расчёты сообщай только на основе их результатов; арифметику выполняет код.',
+      'Для многошаговых задач последовательно используй доступные инструменты и кратко объясняй, что проверено.',
+      'Создание черновика товара, изменение статуса заказа и запись расхода требуют явного подтверждения пользователя. Не утверждай, что действие выполнено, пока пользователь не подтвердил его и инструмент не вернул результат.',
+      'После отказа не повторяй это действие. Если не хватает данных, задай уточняющий вопрос вместо того, чтобы выдумывать значения.',
+      'Инструменты доступны только для личного пространства. Не запрашивай и не раскрывай имена или контакты покупателей.',
+      'Публикации, закупки, интернет-поиск и любые действия с Telegram или Avito недоступны. Не изображай их выполнение.',
+      'Для новой карточки товара используй только данные из запроса; неизвестные цены оставляй нулевыми и обязательно сообщай об этом.',
+    ].join('\n'),
+    stopWhen: isStepCount(MAX_AGENT_STEPS),
+    maxRetries: 0,
+    maxOutputTokens: 1200,
+    experimental_toolApprovalSecret: process.env.BETTER_AUTH_SECRET,
+    toolApproval: {
+      createProductDraft: 'user-approval',
+      updateOrderStatus: 'user-approval',
+      recordExpense: 'user-approval',
+    },
+    tools: {
+      searchCatalog: tool({
+        description: 'Найти товары в личном каталоге CloStore по названию и необязательному статусу. Используй для вопросов о сохранённых товарах.',
+        inputSchema: z.object({
+          query: z.string().max(120).optional().describe('Часть названия или категории товара'),
+          status: z.enum(['active', 'review', 'draft', 'rejected']).optional().describe('Фильтр по внутреннему статусу товара'),
+          limit: z.number().int().min(1).max(12).optional(),
+        }),
+        execute: async ({ query, status, limit }) => {
+          const filters = [eq(products.userId, userId)]
+          const normalizedQuery = query?.trim()
+          if (normalizedQuery) filters.push(or(
+            ilike(products.name, `%${normalizedQuery}%`),
+            ilike(products.category, `%${normalizedQuery}%`),
+          )!)
+          if (status) filters.push(eq(products.status, status))
+
+          const rows = await db.select({
+            name: products.name,
+            category: products.category,
+            source: products.source,
+            purchasePriceRub: products.purchasePriceRub,
+            salePriceRub: products.salePriceRub,
+            sizes: products.sizes,
+            status: products.status,
+          }).from(products)
+            .where(and(...filters))
+            .orderBy(desc(products.createdAt))
+            .limit(limit ?? 8)
+
+          return rows.map((row) => {
+            const purchasePriceRub = Number(row.purchasePriceRub)
+            const salePriceRub = Number(row.salePriceRub)
+            return {
+              name: row.name,
+              category: row.category,
+              source: row.source,
+              purchasePriceRub,
+              salePriceRub,
+              grossMarginRub: Math.round((salePriceRub - purchasePriceRub) * 100) / 100,
+              sizes: row.sizes,
+              status: row.status,
+            }
+          })
+        },
+      }),
+      listOrders: tool({
+        description: 'Показать личные заказы по статусу заказа, этапу доставки или названию товара. Для вопроса о посылках в пути используй этап доставки. Не возвращает имена и контакты покупателей.',
+        inputSchema: z.object({
+          productQuery: z.string().max(120).optional(),
+          status: z.enum(orderStatuses).optional(),
+          deliveryStatus: z.enum(['Не отправлен', 'В пути по Китаю', 'Международная доставка', 'Прибыл', 'Передан покупателю', 'Проблема']).optional(),
+          limit: z.number().int().min(1).max(12).optional(),
+        }),
+        execute: async ({ productQuery, status, deliveryStatus, limit }) => {
+          const filters = [eq(orders.userId, userId)]
+          const normalizedQuery = productQuery?.trim()
+          if (normalizedQuery) filters.push(ilike(orders.productName, `%${normalizedQuery}%`))
+          if (status) filters.push(eq(orders.status, status))
+          if (deliveryStatus) filters.push(eq(orders.deliveryStatus, deliveryStatus))
+
+          const rows = await db.select({
+            id: orders.id,
+            productName: orders.productName,
+            size: orders.size,
+            quantity: orders.quantity,
+            status: orders.status,
+            paymentStatus: orders.paymentStatus,
+            procurementStatus: orders.procurementStatus,
+            deliveryStatus: orders.deliveryStatus,
+            salePriceRub: orders.salePriceRub,
+            costRub: orders.costRub,
+            createdAt: orders.createdAt,
+          }).from(orders)
+            .where(and(...filters))
+            .orderBy(desc(orders.createdAt))
+            .limit(limit ?? 8)
+
+          return rows.map((row) => ({
+            ...row,
+            salePriceRub: Number(row.salePriceRub),
+            costRub: Number(row.costRub),
+            createdAt: row.createdAt.toISOString(),
+          }))
+        },
+      }),
+      getFinancialSummary: tool({
+        description: 'Рассчитать фактические суммарные показатели по завершённым заказам и сохранённым дополнительным расходам. Все суммы рассчитываются программно.',
+        inputSchema: z.object({}),
+        execute: async () => {
+          const [orderRows, expenseRows] = await Promise.all([
+            db.select({ quantity: orders.quantity, salePriceRub: orders.salePriceRub, costRub: orders.costRub })
+              .from(orders).where(and(eq(orders.userId, userId), eq(orders.status, 'Завершён'))),
+            db.select({ amountRub: financialTransactions.amountRub })
+              .from(financialTransactions).where(eq(financialTransactions.userId, userId)),
+          ])
+          const revenueRub = orderRows.reduce((sum, row) => sum + row.quantity * Number(row.salePriceRub), 0)
+          const costRub = orderRows.reduce((sum, row) => sum + row.quantity * Number(row.costRub), 0)
+          const expensesRub = expenseRows.reduce((sum, row) => sum + Number(row.amountRub), 0)
+          return {
+            completedOrders: orderRows.length,
+            revenueRub: Math.round(revenueRub * 100) / 100,
+            costRub: Math.round(costRub * 100) / 100,
+            grossProfitRub: Math.round((revenueRub - costRub) * 100) / 100,
+            additionalExpensesRub: Math.round(expensesRub * 100) / 100,
+            netProfitRub: Math.round((revenueRub - costRub - expensesRub) * 100) / 100,
+          }
+        },
+      }),
+      createProductDraft: tool({
+        description: 'Создать черновик новой карточки товара в очереди проверки после подтверждения пользователя. Не публикует товар.',
+        inputSchema: z.object({
+          name: z.string().min(1).max(180),
+          category: z.string().max(120).optional(),
+          source: z.string().max(120).optional(),
+          sourceUrl: z.string().max(2048).url().optional(),
+          purchasePriceCny: z.number().min(0).max(100_000_000).optional(),
+          purchasePriceRub: z.number().min(0).max(100_000_000).optional(),
+          salePriceRub: z.number().min(0).max(100_000_000).optional(),
+          sizes: z.array(z.string().max(40)).max(20).optional(),
+          description: z.string().max(8000).optional(),
+        }),
+        execute: async (input) => {
+          const name = input.name.trim()
+          if (!name) return { created: false, reason: 'Название товара не может быть пустым.' }
+          const id = randomUUID()
+          await db.insert(products).values({
+            id,
+            userId,
+            name,
+            category: input.category?.trim() ?? '',
+            source: input.source?.trim() ?? '',
+            sourceUrl: input.sourceUrl ?? null,
+            purchasePriceCny: String(Math.round((input.purchasePriceCny ?? 0) * 100) / 100),
+            purchasePriceRub: String(Math.round((input.purchasePriceRub ?? 0) * 100) / 100),
+            salePriceRub: String(Math.round((input.salePriceRub ?? 0) * 100) / 100),
+            sizes: input.sizes?.map((size) => size.trim()).filter(Boolean) ?? [],
+            description: input.description?.trim() ?? '',
+            status: 'review',
+            listingStatus: 'unpublished',
+          })
+          return { created: true, id, name, status: 'добавлен в очередь проверки', published: false }
+        },
+      }),
+      updateOrderStatus: tool({
+        description: 'Изменить статус одного личного заказа после подтверждения пользователя. Сначала найди заказ через listOrders и используй его id.',
+        inputSchema: z.object({
+          orderId: z.string().min(1).max(64),
+          status: z.enum(orderStatuses),
+        }),
+        execute: async ({ orderId, status }) => db.transaction(async (transaction) => {
+          const [existing] = await transaction.select({ id: orders.id, productName: orders.productName, status: orders.status })
+            .from(orders).where(and(eq(orders.id, orderId), eq(orders.userId, userId))).limit(1)
+          if (!existing) return { updated: false, reason: 'Заказ не найден в личном пространстве.' }
+          if (existing.status === status) return { updated: false, reason: 'У заказа уже установлен этот статус.', productName: existing.productName }
+
+          await transaction.update(orders).set({ status, updatedAt: new Date() })
+            .where(and(eq(orders.id, orderId), eq(orders.userId, userId)))
+          await transaction.insert(orderStatusHistory).values({
+            id: randomUUID(),
+            userId,
+            orderId,
+            field: 'Статус заказа',
+            previousValue: existing.status,
+            newValue: status,
+            note: 'Изменено AI-агентом после подтверждения пользователя',
+          })
+          return { updated: true, productName: existing.productName, previousStatus: existing.status, status }
+        }),
+      }),
+      recordExpense: tool({
+        description: 'Записать дополнительный расход в рублях после подтверждения пользователя. Не рассчитывай сумму вместо пользователя.',
+        inputSchema: z.object({
+          category: z.enum(expenseCategories),
+          amountRub: z.number().positive().max(100_000_000),
+          notes: z.string().max(1000).optional(),
+        }),
+        execute: async ({ category, amountRub, notes }) => {
+          const id = randomUUID()
+          const roundedAmount = Math.round(amountRub * 100) / 100
+          await db.insert(financialTransactions).values({
+            id,
+            userId,
+            category,
+            amountRub: String(roundedAmount),
+            notes: notes?.trim() ?? '',
+            occurredAt: new Date(),
+          })
+          return { recorded: true, id, category, amountRub: roundedAmount }
+        },
+      }),
+    },
+  })
+}
+
+function toTaskPreview(row: {
+  id: string
+  prompt: string
+  response: string
+  status: string
+  model: string
+  inputTokens: number | null
+  outputTokens: number | null
+  createdAt: Date
+}): AgentTaskPreview {
+  const response = parseResponse(row.response)
+  return {
+    id: row.id,
+    prompt: row.prompt,
+    response: response.text,
+    pendingApprovals: response.pendingApprovals,
+    status: row.status as AgentTaskPreview['status'],
+    model: row.model,
+    inputTokens: row.inputTokens,
+    outputTokens: row.outputTokens,
+    createdAt: row.createdAt.toISOString(),
+  }
+}
 
 export async function getAgentTasks(): Promise<AgentTaskPreview[]> {
   const userId = await getPersonalWorkspaceUserId()
@@ -29,13 +364,7 @@ export async function getAgentTasks(): Promise<AgentTaskPreview[]> {
     .orderBy(desc(agentTasks.createdAt))
     .limit(HISTORY_LIMIT)
 
-  return rows.map((row) => ({
-    ...row,
-    status: row.status as AgentTaskPreview['status'],
-    inputTokens: row.inputTokens == null ? null : Number(row.inputTokens),
-    outputTokens: row.outputTokens == null ? null : Number(row.outputTokens),
-    createdAt: row.createdAt.toISOString(),
-  }))
+  return rows.map(toTaskPreview)
 }
 
 export async function runAgentTask(rawPrompt: string) {
@@ -45,8 +374,16 @@ export async function runAgentTask(rawPrompt: string) {
     return { ok: false as const, reason: 'invalid_input' as const }
   }
 
+  if (!process.env.DEEPSEEK_API_KEY?.trim()) return { ok: false as const, reason: 'api_key_missing' as const }
+
   const userId = await getPersonalWorkspaceUserId()
   const taskId = randomUUID()
+  const initialResponse: StoredAgentResponse = {
+    format: 'clostore-agent-v1',
+    text: '',
+    messages: [{ role: 'user', content: prompt }],
+    pendingApprovals: [],
+  }
   const canStartTask = await db.transaction(async (transaction) => {
     await transaction.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${userId})::bigint)`)
     const [recentTasks] = await transaction.select({ total: count() }).from(agentTasks)
@@ -57,7 +394,7 @@ export async function runAgentTask(rawPrompt: string) {
       id: taskId,
       userId,
       prompt,
-      response: '',
+      response: serializeResponse(initialResponse),
       status: 'running',
       model: MODEL_ID,
     })
@@ -66,46 +403,139 @@ export async function runAgentTask(rawPrompt: string) {
   if (!canStartTask) return { ok: false as const, reason: 'rate_limited' as const }
 
   try {
-    const result = await generateText({
-      model: gateway(MODEL_ID),
-      system: [
-        'Ты — AI-помощник личного fashion-магазина CloStore. Отвечай по-русски, структурно и кратко.',
-        'У тебя нет доступа к поиску в интернете, каталогам, Telegram, Avito, заказам или инструментам приложения. Не утверждай, что выполнил внешние действия или проверил актуальные данные.',
-        'Не выдумывай цены, наличие, курсы валют, характеристики товара и сведения о поставщиках. Для расчётов запрашивай недостающие исходные данные и показывай формулу.',
-        'Не создавай заказы, не публикуй объявления и не изменяй данные. Давай только текстовые рекомендации и черновики; важные действия всегда требуют отдельного подтверждения пользователя.',
-      ].join('\n'),
-      prompt,
-      maxOutputTokens: 1200,
-      abortSignal: AbortSignal.timeout(45_000),
-    })
-
+    const messages = initialResponse.messages
+    const result = await createAgent(userId).generate({ messages, abortSignal: AbortSignal.timeout(45_000) })
+    const response = responseForResult(result, messages)
+    const status = response.pendingApprovals.length ? 'awaiting_approval' : 'completed'
     const inputTokens = result.usage.inputTokens ?? null
     const outputTokens = result.usage.outputTokens ?? null
     await db.update(agentTasks).set({
-      response: result.text,
-      status: 'completed',
+      response: serializeResponse(response),
+      status,
       inputTokens,
       outputTokens,
       updatedAt: new Date(),
     }).where(and(eq(agentTasks.id, taskId), eq(agentTasks.userId, userId)))
 
-    return {
-      ok: true as const,
-      task: {
-        id: taskId,
-        prompt,
-        response: result.text,
-        status: 'completed' as const,
-        model: MODEL_ID,
-        inputTokens,
-        outputTokens,
-        createdAt: new Date().toISOString(),
-      },
-    }
+    return { ok: true as const, task: toTaskPreview({
+      id: taskId,
+      prompt,
+      response: serializeResponse(response),
+      status,
+      model: MODEL_ID,
+      inputTokens,
+      outputTokens,
+      createdAt: new Date(),
+    }) }
   } catch {
-    await db.update(agentTasks).set({ status: 'failed', updatedAt: new Date() })
+    const reason = 'provider_unavailable'
+    const failedResponse = { ...initialResponse, text: 'DeepSeek временно недоступен. Попробуйте повторить задачу позже.' }
+    await db.update(agentTasks).set({ response: serializeResponse(failedResponse), status: 'failed', updatedAt: new Date() })
       .where(and(eq(agentTasks.id, taskId), eq(agentTasks.userId, userId)))
       .catch(() => undefined)
-    return { ok: false as const, reason: 'provider_unavailable' as const }
+    return { ok: false as const, reason }
+  }
+}
+
+export async function respondToAgentApprovals(
+  taskId: string,
+  rawDecisions: { approvalId: string; approved: boolean }[],
+) {
+  const decisionsResult = z.array(z.object({
+    approvalId: z.string().min(1).max(200),
+    approved: z.boolean(),
+  })).min(1).max(8).safeParse(rawDecisions)
+  if (typeof taskId !== 'string' || taskId.length > 64 || !decisionsResult.success) {
+    return { ok: false as const, reason: 'invalid_input' as const }
+  }
+
+  if (!process.env.DEEPSEEK_API_KEY?.trim()) return { ok: false as const, reason: 'api_key_missing' as const }
+
+  const userId = await getPersonalWorkspaceUserId()
+  const [existing] = await db.select({
+    id: agentTasks.id,
+    prompt: agentTasks.prompt,
+    response: agentTasks.response,
+    status: agentTasks.status,
+    model: agentTasks.model,
+    inputTokens: agentTasks.inputTokens,
+    outputTokens: agentTasks.outputTokens,
+    createdAt: agentTasks.createdAt,
+  }).from(agentTasks).where(and(eq(agentTasks.id, taskId), eq(agentTasks.userId, userId))).limit(1)
+  if (!existing || existing.status !== 'awaiting_approval') return { ok: false as const, reason: 'stale_approval' as const }
+
+  const existingState = parseResponse(existing.response)
+  const decisions = decisionsResult.data
+  const requestedIds = existingState.pendingApprovals.map((approval) => approval.approvalId).sort()
+  const suppliedIds = decisions.map((decision) => decision.approvalId).sort()
+  if (!requestedIds.length || requestedIds.length !== suppliedIds.length || requestedIds.some((id, index) => id !== suppliedIds[index])) {
+    return { ok: false as const, reason: 'stale_approval' as const }
+  }
+
+  const [claimed] = await db.update(agentTasks).set({ status: 'running', updatedAt: new Date() })
+    .where(and(eq(agentTasks.id, taskId), eq(agentTasks.userId, userId), eq(agentTasks.status, 'awaiting_approval')))
+    .returning({ response: agentTasks.response, inputTokens: agentTasks.inputTokens, outputTokens: agentTasks.outputTokens })
+  if (!claimed) return { ok: false as const, reason: 'stale_approval' as const }
+
+  const state = parseResponse(claimed.response)
+  const decisionById = new Map(decisions.map((decision) => [decision.approvalId, decision.approved]))
+  const approvalResponses: ToolApprovalResponse[] = state.pendingApprovals.map((approval) => ({
+    type: 'tool-approval-response',
+    approvalId: approval.approvalId,
+    approved: decisionById.get(approval.approvalId) === true,
+    reason: decisionById.get(approval.approvalId) === true
+      ? 'Пользователь подтвердил действие'
+      : 'Пользователь отклонил действие',
+  }))
+  const messages: ModelMessage[] = [
+    ...state.messages,
+    { role: 'tool', content: approvalResponses },
+  ]
+
+  try {
+    const result = await createAgent(userId).generate({ messages, abortSignal: AbortSignal.timeout(45_000) })
+    const response = responseForResult(result, messages)
+    const status = response.pendingApprovals.length ? 'awaiting_approval' : 'completed'
+    const inputTokens = (claimed.inputTokens ?? 0) + (result.usage.inputTokens ?? 0)
+    const outputTokens = (claimed.outputTokens ?? 0) + (result.usage.outputTokens ?? 0)
+    await db.update(agentTasks).set({
+      response: serializeResponse(response),
+      status,
+      inputTokens,
+      outputTokens,
+      updatedAt: new Date(),
+    }).where(and(eq(agentTasks.id, taskId), eq(agentTasks.userId, userId)))
+    revalidatePath('/')
+
+    return { ok: true as const, task: toTaskPreview({
+      ...existing,
+      response: serializeResponse(response),
+      status,
+      inputTokens,
+      outputTokens,
+      createdAt: existing.createdAt,
+    }) }
+  } catch {
+    const hasApprovedAction = decisions.some((decision) => decision.approved)
+    const failureResponse: StoredAgentResponse = {
+      format: 'clostore-agent-v1',
+      text: hasApprovedAction
+        ? 'Не удалось получить финальный ответ после подтверждения. Перед повтором проверьте каталог, заказ и финансовые записи, чтобы не создать дубликат.'
+        : 'Не удалось завершить задачу. Действия были отклонены и не выполнялись.',
+      messages: state.messages,
+      pendingApprovals: [],
+    }
+    await db.update(agentTasks).set({
+      response: serializeResponse(failureResponse),
+      status: 'failed',
+      updatedAt: new Date(),
+    }).where(and(eq(agentTasks.id, taskId), eq(agentTasks.userId, userId)))
+    revalidatePath('/')
+    return { ok: true as const, task: toTaskPreview({
+      ...existing,
+      response: serializeResponse(failureResponse),
+      status: 'failed',
+      createdAt: existing.createdAt,
+    }) }
   }
 }

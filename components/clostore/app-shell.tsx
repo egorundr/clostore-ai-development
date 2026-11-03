@@ -19,7 +19,6 @@ import {
   Shirt,
   ShoppingBag,
   Sparkles,
-  Store,
   Truck,
   Users,
   Wallet,
@@ -62,7 +61,6 @@ const navigation: NavigationGroup[] = [
   {
     label: 'Продажи и данные',
     items: [
-      { id: 'avito', label: 'Avito', icon: Store },
       { id: 'telegram', label: 'Telegram', icon: MessageCircle },
       { id: 'pricing', label: 'Ценообразование', icon: CreditCard },
       { id: 'analytics', label: 'Аналитика', icon: Activity },
@@ -84,7 +82,6 @@ const sectionTitles: Record<SectionId, string> = {
   editor: 'Редактор карточек',
   suppliers: 'Поставщики',
   orders: 'Заказы',
-  avito: 'Avito',
   telegram: 'Telegram',
   pricing: 'Ценообразование',
   analytics: 'Аналитика',
@@ -92,7 +89,7 @@ const sectionTitles: Record<SectionId, string> = {
   settings: 'Настройки',
 }
 
-function Sidebar({ active, onNavigate, mobile = false, onClose, reviewCount }: { active: SectionId; onNavigate: (section: SectionId) => void; mobile?: boolean; onClose?: () => void; reviewCount: number }) {
+function Sidebar({ active, onNavigate, mobile = false, onClose, reviewCount, deepseekConfigured }: { active: SectionId; onNavigate: (section: SectionId) => void; mobile?: boolean; onClose?: () => void; reviewCount: number; deepseekConfigured: boolean }) {
   return (
     <aside className={`flex h-full flex-col border-r border-white/[0.07] bg-[#141618] ${mobile ? 'w-[290px]' : 'w-[250px]'}`}>
       <div className="flex h-[72px] items-center justify-between border-b border-white/[0.06] px-5">
@@ -103,8 +100,8 @@ function Sidebar({ active, onNavigate, mobile = false, onClose, reviewCount }: {
         {mobile && <Button size="icon-sm" variant="ghost" aria-label="Закрыть меню" onClick={onClose}><X /></Button>}
       </div>
       <div className="px-3 pt-4">
-        <div className="flex items-center justify-between rounded-lg border border-white/[0.07] bg-white/[0.025] px-3 py-2.5">
-          <div className="flex items-center gap-2.5"><span className="relative flex size-2"><span className="absolute inline-flex size-full animate-ping rounded-full bg-amber-200/40" /><span className="relative inline-flex size-2 rounded-full bg-amber-200" /></span><span className="text-xs font-medium">DeepSeek подключён</span></div>
+          <div className="flex items-center justify-between rounded-lg border border-white/[0.07] bg-white/[0.025] px-3 py-2.5">
+          <div className="flex items-center gap-2.5"><span className={`size-2 rounded-full ${deepseekConfigured ? 'bg-emerald-300' : 'bg-amber-300'}`} /><span className="text-xs font-medium">DeepSeek API {deepseekConfigured ? 'готов' : 'не настроен'}</span></div>
           <ChevronDown className="text-muted-foreground" />
         </div>
       </div>
@@ -138,6 +135,7 @@ function Sidebar({ active, onNavigate, mobile = false, onClose, reviewCount }: {
 }
 
 export function CloStoreApp({ initialData, initialAgentTasks, integrations }: { initialData: WorkspaceData; initialAgentTasks: AgentTaskPreview[]; integrations: IntegrationStatus[] }) {
+  const deepseekConfigured = integrations.find((integration) => integration.name === 'DeepSeek API')?.configured ?? false
   const [active, setActive] = useState<SectionId>('dashboard')
   const [mobileOpen, setMobileOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
@@ -151,8 +149,8 @@ export function CloStoreApp({ initialData, initialAgentTasks, integrations }: { 
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="flex min-h-screen">
-        <div className="sticky top-0 hidden h-screen shrink-0 lg:block"><Sidebar active={active} onNavigate={navigate} reviewCount={initialData.summary.reviewCount} /></div>
-        {mobileOpen && <div className="fixed inset-0 z-50 lg:hidden"><button className="absolute inset-0 bg-black/70" aria-label="Закрыть меню" onClick={() => setMobileOpen(false)} /><div className="relative h-full w-fit"><Sidebar active={active} onNavigate={navigate} mobile onClose={() => setMobileOpen(false)} reviewCount={initialData.summary.reviewCount} /></div></div>}
+        <div className="sticky top-0 hidden h-screen shrink-0 lg:block"><Sidebar active={active} onNavigate={navigate} reviewCount={initialData.summary.reviewCount} deepseekConfigured={deepseekConfigured} /></div>
+        {mobileOpen && <div className="fixed inset-0 z-50 lg:hidden"><button className="absolute inset-0 bg-black/70" aria-label="Закрыть меню" onClick={() => setMobileOpen(false)} /><div className="relative h-full w-fit"><Sidebar active={active} onNavigate={navigate} mobile onClose={() => setMobileOpen(false)} reviewCount={initialData.summary.reviewCount} deepseekConfigured={deepseekConfigured} /></div></div>}
         <div className="min-w-0 flex-1">
           <header className="sticky top-0 z-30 flex h-[64px] items-center gap-3 border-b border-white/[0.07] bg-background/95 px-4 backdrop-blur sm:px-6 lg:px-8">
             <Button className="lg:hidden" size="icon" variant="ghost" aria-label="Открыть меню" onClick={() => setMobileOpen(true)}><Menu /></Button>
@@ -161,12 +159,12 @@ export function CloStoreApp({ initialData, initialAgentTasks, integrations }: { 
             <Badge variant="outline" className="hidden border-white/[0.08] bg-white/[0.025] text-[10px] text-muted-foreground xl:inline-flex"><span className="mr-1.5 size-1.5 rounded-full bg-emerald-300" />Neon подключён</Badge>
             <div className="relative">
               <Button size="icon" variant="ghost" aria-label="Уведомления" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((value) => !value)}><Bell /></Button>
-              {notificationsOpen && <div className="absolute right-0 z-40 mt-2 w-72 rounded-xl border border-white/10 bg-[#1b1d20] p-4 shadow-2xl"><p className="text-sm font-medium">Уведомления</p><p className="mt-2 text-xs leading-5 text-muted-foreground">Пока нет подключённых уведомлений. Здесь появятся события по заказам и задачам.</p></div>}
+              {notificationsOpen && <div className="absolute right-0 z-40 mt-2 w-72 rounded-xl border border-white/10 bg-[#1b1d20] p-4 shadow-2xl"><p className="text-sm font-medium">Уведомления</p><p className="mt-2 text-xs leading-5 text-muted-foreground">��ока нет подключённых уведомлений. Здесь появятся события по заказам и задачам.</p></div>}
             </div>
             <Button className="hidden sm:inline-flex" variant="outline" size="sm" onClick={() => setQuickActionsOpen(true)}><Command data-icon="inline-start" /> Быстрое действие</Button>
           </header>
           <main className="mx-auto w-full max-w-[1560px] px-4 py-6 sm:px-6 sm:py-7 lg:px-8">
-            {active === 'dashboard' ? <DashboardView data={initialData} onNavigate={navigate} /> : <WorkspaceView section={active} onNavigate={navigate} data={initialData} agentTasks={initialAgentTasks} integrations={integrations} />}
+            {active === 'dashboard' ? <DashboardView data={initialData} onNavigate={navigate} deepseekConfigured={deepseekConfigured} /> : <WorkspaceView section={active} onNavigate={navigate} data={initialData} agentTasks={initialAgentTasks} integrations={integrations} />}
           </main>
           <footer className="px-4 pb-5 text-center text-[10px] text-muted-foreground/60 sm:px-6">CloStore AI · рабочее пространство · ранняя версия</footer>
         </div>
@@ -178,7 +176,7 @@ export function CloStoreApp({ initialData, initialAgentTasks, integrations }: { 
             {[
               { label: 'Запустить поиск товаров', section: 'search' as const, icon: Search },
               { label: 'Открыть AI-агента', section: 'agent' as const, icon: Bot },
-              { label: 'Создать заказ', section: 'orders' as const, icon: Truck },
+              { label: 'Создать ��аказ', section: 'orders' as const, icon: Truck },
               { label: 'Открыть каталог', section: 'catalog' as const, icon: Shirt },
             ].map(({ label, section, icon: Icon }) => <Button key={section} variant="outline" className="justify-start" onClick={() => { navigate(section); setQuickActionsOpen(false) }}><Icon data-icon="inline-start" />{label}</Button>)}
           </div>

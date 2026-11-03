@@ -12,6 +12,7 @@ import type { SectionId, WorkspaceData } from './types'
 type DashboardViewProps = {
   data: WorkspaceData
   onNavigate: (section: SectionId) => void
+  deepseekConfigured: boolean
 }
 
 const chartConfig = {
@@ -23,7 +24,7 @@ function shortRub(value: number) {
   return new Intl.NumberFormat('ru-RU', { notation: 'compact', maximumFractionDigits: 1 }).format(value)
 }
 
-export function DashboardView({ data, onNavigate }: DashboardViewProps) {
+export function DashboardView({ data, onNavigate, deepseekConfigured }: DashboardViewProps) {
   const today = new Intl.DateTimeFormat('ru-RU', {
     weekday: 'long',
     day: 'numeric',
@@ -109,8 +110,8 @@ export function DashboardView({ data, onNavigate }: DashboardViewProps) {
         </Card>
 
         <Card className="border-white/[0.07] bg-card/80 shadow-none">
-          <CardHeader className="flex-row items-center justify-between"><div><CardTitle>AI-агент</CardTitle><p className="mt-1 text-xs text-muted-foreground">DeepSeek готов</p></div><span className="size-2 rounded-full bg-emerald-300" /></CardHeader>
-          <CardContent><div className="rounded-lg border border-white/[0.07] bg-white/[0.02] p-4"><div className="flex size-9 items-center justify-center rounded-lg bg-white/[0.05] text-muted-foreground"><Sparkles /></div><p className="mt-3 text-sm font-medium">Текстовые задачи доступны</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Поиск товаров, публикация и изменение данных требуют отдельных настроек API и явного подтверждения.</p><Button className="mt-4 w-full" variant="outline" onClick={() => onNavigate('agent')}>Открыть агента <ArrowRight data-icon="inline-end" /></Button></div><div className="mt-4 flex items-center justify-between text-xs text-muted-foreground"><span>Средний чек</span><span className="text-foreground">{data.summary.orderCount ? formatRub(averageCheck) : '—'}</span></div></CardContent>
+          <CardHeader className="flex-row items-center justify-between"><div><CardTitle>AI-агент</CardTitle><p className="mt-1 text-xs text-muted-foreground">DeepSeek API {deepseekConfigured ? 'готов' : 'не настроен'}</p></div><span className={`size-2 rounded-full ${deepseekConfigured ? 'bg-emerald-300' : 'bg-amber-300'}`} /></CardHeader>
+          <CardContent><div className="rounded-lg border border-white/[0.07] bg-white/[0.02] p-4"><div className="flex size-9 items-center justify-center rounded-lg bg-white/[0.05] text-muted-foreground"><Sparkles /></div><p className="mt-3 text-sm font-medium">{deepseekConfigured ? 'Агент готов к работе' : 'Нужен серверный API-ключ'}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Ключ DEEPSEEK_API_KEY не передаётся в браузер. Изменения в каталоге, заказах и финансах — только после подтверждения.</p><Button className="mt-4 w-full" variant="outline" onClick={() => onNavigate('agent')}>Открыть агента <ArrowRight data-icon="inline-end" /></Button></div><div className="mt-4 flex items-center justify-between text-xs text-muted-foreground"><span>Средний чек</span><span className="text-foreground">{data.summary.orderCount ? formatRub(averageCheck) : '—'}</span></div></CardContent>
         </Card>
       </div>
       <p className="flex items-center justify-center gap-2 pb-1 text-[11px] text-muted-foreground/70"><span className="size-1.5 rounded-full bg-emerald-300" />Показатели загружены из Neon для личного пространства</p>

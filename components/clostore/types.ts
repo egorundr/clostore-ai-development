@@ -9,7 +9,6 @@ export type SectionId =
   | 'editor'
   | 'suppliers'
   | 'orders'
-  | 'avito'
   | 'telegram'
   | 'pricing'
   | 'analytics'
@@ -138,14 +137,22 @@ export type IntegrationStatus = {
   state: string
   configured: boolean
   requiredVariables: string[]
-  testProvider: 'telegram' | 'avito' | null
+  testProvider: 'telegram' | null
+}
+
+export type AgentPendingApproval = {
+  approvalId: string
+  toolName: 'createProductDraft' | 'updateOrderStatus' | 'recordExpense'
+  input: Record<string, unknown>
+  reason?: string
 }
 
 export type AgentTaskPreview = {
   id: string
   prompt: string
   response: string
-  status: 'running' | 'completed' | 'failed'
+  pendingApprovals: AgentPendingApproval[]
+  status: 'running' | 'awaiting_approval' | 'completed' | 'failed'
   model: string
   inputTokens: number | null
   outputTokens: number | null
