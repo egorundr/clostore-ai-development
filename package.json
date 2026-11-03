@@ -11,6 +11,7 @@
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.82",
     "@base-ui/react": "^1.5.0",
+    "@shadcn/react": "^0.3.1",
     "@vercel/analytics": "1.6.1",
     "@vercel/connect": "2.7.0",
     "ai": "^7.0.159",
