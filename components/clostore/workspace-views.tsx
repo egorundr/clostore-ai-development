@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState, useTransition } from 'react'
+import { useMemo, useRef, useState, useTransition } from 'react'
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -9,6 +9,7 @@ import {
   Clock3,
   ExternalLink,
   FileSpreadsheet,
+  History,
   ImagePlus,
   Link2,
   LoaderCircle,
@@ -19,6 +20,7 @@ import {
   Search,
   Send,
   Settings2,
+  ShieldCheck,
   Shirt,
   Sparkles,
   Truck,
@@ -50,6 +52,11 @@ import {
   FieldSet,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
+import { Bubble, BubbleContent } from '@/components/ui/bubble'
+import { Marker, MarkerContent, MarkerIcon } from '@/components/ui/marker'
+import { Message, MessageAvatar, MessageContent, MessageFooter, MessageHeader } from '@/components/ui/message'
+import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from '@/components/ui/message-scroller'
 import { Progress } from '@/components/ui/progress'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
@@ -125,14 +132,48 @@ function approvalTitle(toolName: AgentTaskPreview['pendingApprovals'][number]['t
   return 'Добавить расход'
 }
 
+function agentTaskStatusLabel(status: string) {
+  if (status === 'completed') return 'Готово'
+  if (status === 'running') return 'В работе'
+  if (status === 'awaiting_approval') return 'Нужно решение'
+  return 'Ошибка'
+}
+
+function agentTaskStatusClass(status: string) {
+  if (status === 'completed') return 'border-emerald-300/20 bg-emerald-300/[0.07] text-emerald-100'
+  if (status === 'running') return 'border-sky-300/20 bg-sky-300/[0.07] text-sky-100'
+  if (status === 'awaiting_approval') return 'border-amber-300/20 bg-amber-300/[0.07] text-amber-100'
+  return 'border-white/10 bg-white/[0.03] text-muted-foreground'
+}
+
 function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
   const [task, setTask] = useState('')
   const [tasks, setTasks] = useState(initialTasks)
-  const [selectedTaskId, setSelectedTaskId] = useState(initialTasks[0]?.id ?? '')
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(initialTasks[0]?.id ?? null)
+  const [historyQuery, setHistoryQuery] = useState('')
   const [error, setError] = useState('')
   const [pending, startTransition] = useTransition()
+  const composerRef = useRef<HTMLTextAreaElement>(null)
   const suggestions = ['Покажи активные товары в каталоге', 'Какие заказы сейчас в пути?', 'Создай черновик товара из моего описания']
-  const activeTask = tasks.find((item) => item.id === selectedTaskId) ?? tasks[0]
+  const activeTask = selectedTaskId ? tasks.find((item) => item.id === selectedTaskId) ?? tasks[0] : undefined
+  const filteredTasks = useMemo(() => {
+    const query = historyQuery.trim().toLocaleLowerCase('ru-RU')
+    return tasks.filter((item) => item.prompt.toLocaleLowerCase('ru-RU').includes(query)).slice(0, 12)
+  }, [historyQuery, tasks])
+  const shortDate = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeZone: 'Europe/Moscow' })
+  const dateTime = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Moscow' })
+
+  function startNewTask() {
+    setSelectedTaskId(null)
+    setTask('')
+    setError('')
+    requestAnimationFrame(() => composerRef.current?.focus())
+  }
+
+  function chooseSuggestion(prompt: string) {
+    setTask(prompt)
+    composerRef.current?.focus()
+  }
 
   function submitTask(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -175,39 +216,174 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
   }
 
   return (
-    <div className="space-y-5">
-      <SectionHeading title="AI-агент" description="Выполняет цепочки действий в CloStore. Изменения в базе — только после вашего подтверждения." action={<Badge variant="outline" className="w-fit border-emerald-300/20 text-emerald-100"><span className="mr-2 size-1.5 rounded-full bg-emerald-300" />DeepSeek API</Badge>} />
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
-        <Card className="flex min-h-[480px] flex-col border-white/[0.07] bg-card/80 shadow-none">
-          <CardHeader className="flex flex-row items-center gap-3 border-b border-white/[0.06]">
-            <span className="flex size-9 items-center justify-center rounded-lg bg-white/[0.05] text-muted-foreground"><Sparkles /></span><div><CardTitle>Рабочий диалог</CardTitle><p className="mt-1 text-xs text-muted-foreground">{tasks[0]?.model ?? 'deepseek-flash'} · история сохраняется в Neon</p></div>
-          </CardHeader>
-          <CardContent className="flex flex-1 flex-col justify-between gap-6 p-5">
-            <div className="max-h-[420px] space-y-4 overflow-y-auto pr-1">
-              {activeTask ? <>
-                <div className="ml-auto max-w-xl rounded-xl border border-white/[0.08] bg-white/[0.045] p-4"><p className="text-xs text-muted-foreground">Ваша задача</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6">{activeTask.prompt}</p></div>
-                <div className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4"><p className="mb-2 text-xs text-muted-foreground">Ответ агента</p>{activeTask.response ? <p className="whitespace-pre-wrap text-sm leading-6">{activeTask.response}</p> : <p className="text-sm text-muted-foreground">{activeTask.status === 'running' ? 'Задача выполняется…' : 'Запрос завершился ошибкой. Отправьте его повторно.'}</p>}<p className="mt-3 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Moscow' }).format(new Date(activeTask.createdAt))}{activeTask.inputTokens != null && activeTask.outputTokens != null ? ` · ${activeTask.inputTokens + activeTask.outputTokens} токенов` : ''}</p></div>
-                {activeTask.pendingApprovals.length > 0 && <Card className="max-w-xl border-amber-300/20 bg-amber-300/[0.04] shadow-none"><CardHeader><CardTitle className="text-sm">Нужно ваше подтверждение</CardTitle><p className="text-xs text-muted-foreground">Агент не выполнит эти изменения без вашего решения.</p></CardHeader><CardContent className="flex flex-col gap-4">
-                  {activeTask.pendingApprovals.map((approval) => <div key={approval.approvalId} className="rounded-lg border border-white/[0.08] bg-background/50 p-3"><p className="text-sm font-medium">{approvalTitle(approval.toolName)}</p>{approval.reason && <p className="mt-1 text-xs text-muted-foreground">{approval.reason}</p>}<dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs"><>{approvalDetails(approval).map(([label, value]) => <div key={label} className="contents"><dt className="text-muted-foreground">{label}</dt><dd className="break-words text-right">{value}</dd></div>)}</></dl></div>)}
-                  <div className="flex flex-wrap gap-2"><Button type="button" disabled={pending} onClick={() => decideApprovals(true)}><Check data-icon="inline-start" />{pending ? 'Выполняю…' : 'Подтвердить все'}</Button><Button type="button" variant="outline" disabled={pending} onClick={() => decideApprovals(false)}><X data-icon="inline-start" />Отклонить все</Button></div>
-                </CardContent></Card>}
-              </> : <div className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4"><p className="text-sm leading-6">Опишите цель обычным языком. Агент использует каталог, заказы и финансовые инструменты приложения.</p><p className="mt-3 text-xs text-muted-foreground">Создание карточек, изменения статусов заказов и запись расходов — только с подтверждением. Публикации и действия в Telegram или Avito пока недоступны.</p></div>}
-              {pending && <div role="status" className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4 text-sm text-muted-foreground">DeepSeek выполняет шаг задачи…</div>}
-              {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+    <div className="flex flex-col gap-5">
+      <div className="flex items-center justify-between gap-3 border-b border-white/[0.07] pb-4">
+        <div className="min-w-0">
+          <p className="hidden text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground sm:block">CloStore AI / рабочая область</p>
+          <div className="flex flex-wrap items-center gap-2 sm:mt-2 sm:gap-3">
+            <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">AI-агент</h1>
+            <Badge variant="outline" className="border-emerald-300/20 text-emerald-100"><span className="mr-2 size-1.5 rounded-full bg-emerald-300" />DeepSeek API</Badge>
+          </div>
+          <p className="mt-1 hidden text-sm text-muted-foreground sm:block">Работайте с каталогом, заказами и расходами — под вашим контролем.</p>
+        </div>
+        <Button type="button" size="sm" variant="outline" disabled={pending} onClick={startNewTask} className="shrink-0 px-2.5 sm:px-3"><Plus data-icon="inline-start" /><span className="sm:hidden">Новая</span><span className="hidden sm:inline">Новая задача</span></Button>
+      </div>
+
+      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_310px]">
+        <Card className="flex h-[calc(100svh-165px)] min-h-[360px] flex-col overflow-hidden border-white/[0.07] bg-card/80 shadow-none md:h-auto md:min-h-[580px]">
+          <CardHeader className="flex flex-row items-center justify-between gap-3 border-b border-white/[0.06]">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-emerald-300/10 bg-emerald-300/[0.06] text-emerald-100"><Sparkles /></span>
+              <div className="min-w-0">
+                <CardTitle className="truncate">{activeTask ? 'Задача' : 'Новая задача'}</CardTitle>
+                <p className="mt-1 truncate text-xs text-muted-foreground">{activeTask?.model ?? tasks[0]?.model ?? 'deepseek-flash'} · история сохраняется в Neon</p>
+              </div>
             </div>
-            <form onSubmit={submitTask} className="space-y-3">
-              <div className="flex flex-wrap gap-2">{suggestions.map((item) => <Button key={item} type="button" variant="outline" size="sm" disabled={pending} onClick={() => setTask(item)}>{item}</Button>)}</div>
+            {activeTask && <Badge variant="outline" className={agentTaskStatusClass(activeTask.status)}>{agentTaskStatusLabel(activeTask.status)}</Badge>}
+          </CardHeader>
+
+          <CardContent className="flex min-h-0 flex-1 flex-col p-0">
+            {activeTask ? <MessageScrollerProvider key={activeTask.id} defaultScrollPosition="end" autoScroll>
+              <MessageScroller className="min-h-[100px] flex-1 md:min-h-[280px]">
+                <MessageScrollerViewport aria-label="История диалога с AI-агентом" className="px-5 py-6 sm:px-7">
+                  <MessageScrollerContent className="min-h-full justify-start">
+                    <MessageScrollerItem messageId={`${activeTask.id}-request`} className="flex justify-end">
+                      <Message align="end" className="max-w-[88%]">
+                        <MessageContent className="items-end">
+                          <MessageHeader className="px-1">Вы</MessageHeader>
+                          <Bubble variant="muted" align="end"><BubbleContent className="whitespace-pre-wrap border-white/[0.06] px-4 py-3 text-sm leading-6">{activeTask.prompt}</BubbleContent></Bubble>
+                        </MessageContent>
+                      </Message>
+                    </MessageScrollerItem>
+                    <MessageScrollerItem messageId={`${activeTask.id}-response`} scrollAnchor>
+                      <Message>
+                        <MessageAvatar className="size-8 rounded-xl border border-emerald-300/10 bg-emerald-300/[0.06] text-emerald-100"><Sparkles className="size-4" /></MessageAvatar>
+                        <MessageContent>
+                          <MessageHeader className="gap-2 px-0"><span className="text-foreground">CloStore AI</span><span aria-hidden="true" className="text-muted-foreground/60">·</span><span>{activeTask.model}</span></MessageHeader>
+                          <Bubble variant="ghost"><BubbleContent className="whitespace-pre-wrap px-0 py-0 text-sm leading-7 text-foreground">{activeTask.response || (activeTask.status === 'running' ? 'Задача выполняется…' : 'Запрос завершился с ошибкой. Отправьте его повторно.')}</BubbleContent></Bubble>
+                          <MessageFooter className="gap-2 px-0 text-[10px]">
+                            <time dateTime={new Date(activeTask.createdAt).toISOString()}>{dateTime.format(new Date(activeTask.createdAt))}</time>
+                            {activeTask.inputTokens != null && activeTask.outputTokens != null && <><span aria-hidden="true">·</span><span>{activeTask.inputTokens + activeTask.outputTokens} токенов</span></>}
+                          </MessageFooter>
+                        </MessageContent>
+                      </Message>
+                    </MessageScrollerItem>
+                    {activeTask.pendingApprovals.length > 0 && <MessageScrollerItem messageId={`${activeTask.id}-approval`}>
+                      <Card className="ml-10 max-w-2xl border-amber-300/20 bg-amber-300/[0.04] shadow-none">
+                        <CardHeader className="gap-1.5">
+                          <CardTitle className="flex items-center gap-2 text-sm"><ShieldCheck className="text-amber-200" />Нужно ваше подтверждение</CardTitle>
+                          <p className="text-xs text-muted-foreground">Проверьте детали: агент не применит изменения без вашего решения.</p>
+                        </CardHeader>
+                        <CardContent className="flex flex-col gap-4">
+                          {activeTask.pendingApprovals.map((approval) => <div key={approval.approvalId} className="rounded-lg border border-white/[0.08] bg-background/50 p-3">
+                            <p className="text-sm font-medium">{approvalTitle(approval.toolName)}</p>
+                            {approval.reason && <p className="mt-1 text-xs text-muted-foreground">{approval.reason}</p>}
+                            <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">{approvalDetails(approval).map(([label, value]) => <div key={label} className="contents"><dt className="text-muted-foreground">{label}</dt><dd className="break-words text-right">{value}</dd></div>)}</dl>
+                          </div>)}
+                          <div className="flex flex-wrap gap-2">
+                            <Button type="button" disabled={pending} onClick={() => decideApprovals(true)}><Check data-icon="inline-start" />{pending ? 'Выполняю…' : 'Подтвердить изменения'}</Button>
+                            <Button type="button" variant="outline" disabled={pending} onClick={() => decideApprovals(false)}><X data-icon="inline-start" />Отклонить</Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </MessageScrollerItem>}
+                    {pending && <MessageScrollerItem messageId="agent-pending"><Marker role="status" className="text-muted-foreground"><MarkerIcon><LoaderCircle className="animate-spin" /></MarkerIcon><MarkerContent>Агент анализирует задачу и данные магазина…</MarkerContent></Marker></MessageScrollerItem>}
+                    {error && <MessageScrollerItem messageId="agent-error"><Marker role="alert" className="text-destructive"><MarkerIcon><X /></MarkerIcon><MarkerContent>{error}</MarkerContent></Marker></MessageScrollerItem>}
+                  </MessageScrollerContent>
+                </MessageScrollerViewport>
+                <MessageScrollerButton direction="end" className="rounded-full shadow-lg" />
+              </MessageScroller>
+            </MessageScrollerProvider> : <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto p-4 sm:p-7">
+              <Empty className="w-full max-w-2xl border-0 py-2 sm:py-10">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon" className="hidden size-12 rounded-2xl border border-emerald-300/10 bg-emerald-300/[0.06] text-emerald-100 sm:flex"><Sparkles className="size-5" /></EmptyMedia>
+                  <EmptyTitle className="text-lg sm:text-xl">С чего начнём?</EmptyTitle>
+                  <EmptyDescription className="hidden sm:block">Поставьте задачу обычным языком. Агент поможет разобраться в данных магазина и подготовит следующий шаг.</EmptyDescription>
+                </EmptyHeader>
+                <EmptyContent className="mt-3 hidden w-full max-w-2xl grid-cols-1 gap-2 sm:grid sm:grid-cols-2">
+                  {suggestions.map((item) => <Button key={item} type="button" variant="outline" size="sm" disabled={pending} className="h-auto min-h-11 justify-between gap-3 whitespace-normal px-3 py-2.5 text-left leading-5" onClick={() => chooseSuggestion(item)}><span className="min-w-0 flex-1">{item}</span><ArrowRight data-icon="inline-end" /></Button>)}
+                </EmptyContent>
+              </Empty>
+              {pending && <Marker role="status" className="text-muted-foreground"><MarkerIcon><LoaderCircle className="animate-spin" /></MarkerIcon><MarkerContent>Агент анализирует задачу и данные магазина…</MarkerContent></Marker>}
+              {error && <Marker role="alert" className="text-destructive"><MarkerIcon><X /></MarkerIcon><MarkerContent>{error}</MarkerContent></Marker>}
+            </div>}
+
+            <form onSubmit={submitTask} className="border-t border-white/[0.07] bg-background/20 p-4 sm:p-5">
               <Field>
                 <FieldLabel htmlFor="agent-task" className="sr-only">Текст задачи</FieldLabel>
-                <Textarea id="agent-task" maxLength={4000} value={task} onChange={(event) => setTask(event.target.value)} placeholder="Опишите задачу для AI-агента…" className="min-h-24 resize-y border-white/10 bg-black/10" />
+                <Textarea ref={composerRef} id="agent-task" aria-describedby="agent-composer-hint" maxLength={4000} disabled={pending} value={task} onChange={(event) => setTask(event.target.value)} onKeyDown={(event) => {
+                  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+                    event.preventDefault()
+                    event.currentTarget.form?.requestSubmit()
+                  }
+                }} placeholder="Например: покажи заказы в пути и выдели те, где нужна проверка" className="min-h-20 resize-y border-0 bg-transparent px-1 py-2 shadow-none focus-visible:ring-0" />
               </Field>
-              <div className="flex items-center justify-between gap-3"><span className="text-xs text-muted-foreground">До 4 000 символов · действия требуют подтверждения</span><Button type="submit" disabled={!task.trim() || pending}>{pending ? <><LoaderCircle data-icon="inline-start" className="animate-spin" /> Выполняю…</> : <><Send data-icon="inline-start" /> Запустить агента</>}</Button></div>
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2 text-[10px] text-muted-foreground">
+                  <span className="shrink-0">До 4 000 символов</span>
+                  <span id="agent-composer-hint" className="sr-only sm:not-sr-only sm:truncate">Изменения — только после подтверждения</span>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <kbd className="hidden rounded-md border border-white/[0.08] bg-white/[0.025] px-2 py-1 text-[10px] text-muted-foreground sm:inline-flex">Ctrl / ⌘ Enter</kbd>
+                  <span className="text-[10px] tabular-nums text-muted-foreground">{task.length.toLocaleString('ru-RU')} / 4 000</span>
+                  <Button type="submit" disabled={!task.trim() || pending}>
+                    {pending ? <><LoaderCircle data-icon="inline-start" className="animate-spin" />Отправляем…</> : <><Send data-icon="inline-start" />Отправить</>}
+                  </Button>
+                </div>
+              </div>
             </form>
           </CardContent>
         </Card>
-        <aside className="space-y-4">
-          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Последние задания</CardTitle><p className="text-xs text-muted-foreground">Сохранённая история · до 20 задач</p></CardHeader><CardContent className="space-y-2">{tasks.length ? tasks.slice(0, 8).map((item) => <button key={item.id} type="button" onClick={() => setSelectedTaskId(item.id)} className={`w-full rounded-lg border p-3 text-left transition-colors ${selectedTaskId === item.id ? 'border-white/15 bg-white/[0.05]' : 'border-white/[0.06] hover:bg-white/[0.03]'}`}><span className="block truncate text-xs font-medium">{item.prompt}</span><span className="mt-1 block text-[10px] text-muted-foreground">{item.status === 'completed' ? 'Готово' : item.status === 'running' ? 'Выполняется' : item.status === 'awaiting_approval' ? 'Нужно подтверждение' : 'Ошибка'} · {new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeZone: 'Europe/Moscow' }).format(new Date(item.createdAt))}</span></button>) : <div className="rounded-lg border border-dashed border-white/10 p-4 text-center"><MessageSquareText className="mx-auto text-muted-foreground" /><p className="mt-3 text-sm">Сохранённых задач пока нет</p></div>}</CardContent></Card>
-          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Доступ к данным</CardTitle></CardHeader><CardContent className="space-y-3 text-xs leading-5 text-muted-foreground"><p>DeepSeek API получает только данные каталога, заказов и финансов, необходимые для ответа. Контакты покупателей агенту не передаются.</p><p>Изменения записываются в Neon только после подтверждения. Отказ не меняет данные; Telegram, Avito, закупки и интернет-поиск пока не подключены к агенту.</p></CardContent></Card>
+
+        <aside className="flex flex-col gap-4 xl:sticky xl:top-24">
+          <Card className="border-white/[0.07] bg-card/80 shadow-none">
+            <CardHeader className="gap-3 pb-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <History className="shrink-0 text-muted-foreground" />
+                  <div className="min-w-0"><CardTitle>История задач</CardTitle><p className="mt-1 text-xs text-muted-foreground">Последние 20 запусков</p></div>
+                </div>
+                <Badge variant="secondary" className="tabular-nums">{tasks.length}</Badge>
+              </div>
+              <div className="relative">
+                <Search aria-hidden="true" className="absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" />
+                <Input aria-label="Поиск по истории задач" value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder="Найти задачу" className="h-9 border-white/[0.08] bg-white/[0.025] pl-9 text-xs" />
+              </div>
+            </CardHeader>
+            <CardContent className="flex max-h-[48vh] flex-col gap-1.5 overflow-y-auto px-3 pb-3">
+              {filteredTasks.length ? filteredTasks.map((item) => {
+                const selected = selectedTaskId === item.id
+                return <button key={item.id} type="button" aria-pressed={selected} onClick={() => { setSelectedTaskId(item.id); setError('') }} className={`w-full rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${selected ? 'border-white/15 bg-white/[0.06]' : 'border-transparent hover:border-white/[0.07] hover:bg-white/[0.03]'}`}>
+                  <span className="block truncate text-xs font-medium leading-5">{item.prompt}</span>
+                  <span className="mt-2 flex items-center justify-between gap-2">
+                    <Badge variant="outline" className={`max-w-full truncate text-[10px] ${agentTaskStatusClass(item.status)}`}>{agentTaskStatusLabel(item.status)}</Badge>
+                    <time dateTime={new Date(item.createdAt).toISOString()} className="shrink-0 text-[10px] text-muted-foreground">{shortDate.format(new Date(item.createdAt))}</time>
+                  </span>
+                </button>
+              }) : <p className="px-3 py-8 text-center text-xs leading-5 text-muted-foreground">{tasks.length ? 'Задач по этому запросу не найдено.' : 'История появится после первого запуска.'}</p>}
+            </CardContent>
+          </Card>
+
+          <Card className="border-white/[0.07] bg-card/80 shadow-none">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="flex size-8 items-center justify-center rounded-lg bg-emerald-300/[0.06] text-emerald-100"><ShieldCheck /></span>
+                <div><CardTitle>Контекст и доступ</CardTitle><p className="mt-1 text-xs text-muted-foreground">Ограниченные права</p></div>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4 text-xs leading-5 text-muted-foreground">
+              <div>
+                <p className="font-medium text-foreground">Доступно агенту</p>
+                <div className="mt-2 flex flex-wrap gap-1.5"><Badge variant="secondary"><Package data-icon="inline-start" />Каталог</Badge><Badge variant="secondary"><Truck data-icon="inline-start" />Заказы</Badge><Badge variant="secondary"><Wallet data-icon="inline-start" />Финансы</Badge></div>
+              </div>
+              <Separator className="bg-white/[0.06]" />
+              <div className="flex items-start gap-2.5">
+                <CheckCircle2 className="mt-0.5 shrink-0 text-emerald-200" />
+                <div><p className="font-medium text-foreground">Изменения под контролем</p><p className="mt-1">Создание карточек, обновление статусов и расходы — только после вашего подтверждения.</p></div>
+              </div>
+              <p>Контакты покупателей не передаются. Telegram, Avito, закупки и интернет-поиск пока не подключены.</p>
+            </CardContent>
+          </Card>
         </aside>
       </div>
     </div>
