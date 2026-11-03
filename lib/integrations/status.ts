@@ -28,10 +28,10 @@ export function getIntegrationStatuses(): IntegrationStatus[] {
     },
     {
       name: 'Telegram Bot API',
-      detail: 'Токен бота управляется через Vercel Connect. Для публикаций потребуется указать TELEGRAM_CHAT_ID.',
-      state: process.env.TELEGRAM_CHAT_ID?.trim() ? 'Подключён · получатель задан' : 'Подключён · получатель не задан',
+      detail: `Токен бота управляется через Vercel Connect. Публикации направляются в @clostorelink${process.env.TELEGRAM_CHAT_ID?.trim() ? ' или в адрес из TELEGRAM_CHAT_ID' : ''}.`,
+      state: 'Получатель настроен',
       configured: telegramConfigured,
-      requiredVariables: ['TELEGRAM_CHAT_ID'],
+      requiredVariables: [],
       testProvider: 'telegram',
     },
     {

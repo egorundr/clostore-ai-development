@@ -2,7 +2,7 @@ import 'server-only'
 
 import { and, count, desc, eq, gte, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { financialTransactions, orderStatusHistory, orders, productSearches, products, suppliers } from '@/lib/db/schema'
+import { financialTransactions, orderStatusHistory, orders, productSearches, products, publications, suppliers } from '@/lib/db/schema'
 import type { OrderStatus, WorkspaceData } from '@/components/clostore/types'
 
 const orderStatuses: OrderStatus[] = [
@@ -34,9 +34,10 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
   since.setUTCMonth(since.getUTCMonth() - 5, 1)
   since.setUTCHours(0, 0, 0, 0)
 
-  const [orderRows, productRows, supplierRows, searchRows, historyRows, transactionRows, orderTotals, transactionTotals, reviewTotals, publishedTotals, trendRows, expenseTrendRows] = await Promise.all([
+  const [orderRows, productRows, publicationRows, supplierRows, searchRows, historyRows, transactionRows, orderTotals, transactionTotals, reviewTotals, publishedTotals, trendRows, expenseTrendRows] = await Promise.all([
     db.select().from(orders).where(eq(orders.userId, userId)).orderBy(desc(orders.createdAt)).limit(100),
     db.select().from(products).where(eq(products.userId, userId)).orderBy(desc(products.createdAt)).limit(200),
+    db.select().from(publications).where(eq(publications.userId, userId)).orderBy(desc(publications.createdAt)).limit(100),
     db.select().from(suppliers).where(eq(suppliers.userId, userId)).orderBy(suppliers.name).limit(200),
     db.select().from(productSearches).where(eq(productSearches.userId, userId)).orderBy(desc(productSearches.createdAt)).limit(20),
     db.select().from(orderStatusHistory).where(eq(orderStatusHistory.userId, userId)).orderBy(desc(orderStatusHistory.createdAt)).limit(1000),
@@ -89,6 +90,7 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
       purchaseRub: amount(product.purchasePriceRub),
       salePriceRub: amount(product.salePriceRub),
       sizes: Array.isArray(product.sizes) ? product.sizes : [],
+      images: Array.isArray(product.images) ? product.images : [],
       description: product.description,
       status: product.status === 'review' ? 'На рассмотрении' : product.status === 'active' ? 'В каталоге' : product.status === 'rejected' ? 'Отклонён' : 'Черновик',
       listingStatus: product.listingStatus === 'published' ? 'Опубликован' : product.listingStatus === 'draft' ? 'Черновик' : 'Не опубликован',
@@ -171,6 +173,19 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
       })),
     })),
     products: mappedProducts,
+    publications: publicationRows.map((publication) => ({
+      id: publication.id,
+      productId: publication.productId,
+      channel: publication.channel,
+      title: publication.title,
+      body: publication.body,
+      imageUrls: Array.isArray(publication.imageUrls) ? publication.imageUrls : [],
+      status: publication.status,
+      externalMessageId: publication.externalMessageId,
+      publishedAt: publication.publishedAt?.toISOString() ?? null,
+      error: publication.error,
+      createdAt: publication.createdAt.toISOString(),
+    })),
     suppliers: supplierRows.map((supplier) => ({
       id: supplier.id,
       name: supplier.name,

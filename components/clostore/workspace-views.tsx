@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo, useRef, useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -62,11 +63,11 @@ import { Separator } from '@/components/ui/separator'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { cancelAgentTask, respondToAgentApprovals, runAgentTask } from '@/app/actions/agent'
-import { testTelegramConnection } from '@/app/actions/integrations'
+import { publishTelegramPublication, saveTelegramPublication, testTelegramConnection } from '@/app/actions/integrations'
 import { saveProductSearch, updateProductPricing } from '@/app/actions/workspace'
 import { calculatePricing, formatRub, type PricingInputs } from '@/lib/pricing'
 import { demoOrders, demoProducts } from './demo-data'
-import type { AgentTaskPreview, AgentUsageSummary, DemoProduct, IntegrationStatus, SavedProductSearch, SectionId, WorkspaceData } from './types'
+import type { AgentTaskPreview, AgentUsageSummary, DemoProduct, IntegrationStatus, SavedProductSearch, SectionId, WorkspaceData, WorkspacePublication } from './types'
 import { LiveAnalyticsView, LiveCatalogView, LiveEditorView, LiveOrdersView, LiveReviewView, LiveSuppliersView } from './live-workspace-views'
 
 type WorkspaceViewsProps = {
@@ -620,11 +621,139 @@ function PricingView({ data }: { data: WorkspaceData }) {
 
 function ResultRow({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) { return <div className="flex items-center justify-between gap-3 text-sm"><span className={strong ? 'font-medium' : 'text-muted-foreground'}>{label}</span><span className={`tabular-nums ${strong ? 'font-semibold' : ''}`}>{value}</span></div> }
 
-function PublicationView({ channel }: { channel: 'Telegram' }) {
-  const [text, setText] = useState('')
+function publicationStatusLabel(status: string) {
+  if (status === 'published') return 'Опубликована'
+  if (status === 'publishing') return 'Отправляется'
+  if (status === 'failed') return 'Ошибка отправки'
+  return 'Черновик'
+}
+
+function PublicationView({ data }: { data: WorkspaceData }) {
+  const router = useRouter()
+  const [draftId, setDraftId] = useState('')
+  const [productId, setProductId] = useState('')
+  const [title, setTitle] = useState('')
+  const [body, setBody] = useState('')
+  const [images, setImages] = useState('')
+  const [pending, startTransition] = useTransition()
   const [notice, setNotice] = useState('')
-  function saveDraft(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); setNotice('Предпросмотр обновлён в браузере; черновик в Neon не сохраняется.') }
-  return <div className="space-y-5"><SectionHeading title="Telegram" description="Подготовка карточек и публикаций для Telegram." action={<Badge variant="outline" className="w-fit border-white/10 text-muted-foreground"><span className="mr-2 size-1.5 rounded-full bg-white/20" />Подключение через Vercel Connect</Badge>} /><DemoNotice>Черновик не отправляется автоматически. Для публикации нужно задать получателя и отдельно подтвердить отправку.</DemoNotice><div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]"><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Редактор публикации</CardTitle><p className="text-xs text-muted-foreground">Сначала сохраните черновик и проверьте текст</p></CardHeader><CardContent><form onSubmit={saveDraft} className="space-y-4"><FieldGroup><Field><FieldLabel htmlFor="listing-title">Заголовок</FieldLabel><Input id="listing-title" placeholder="Название модели" /></Field><Field><FieldLabel htmlFor="listing-text">Описание</FieldLabel><Textarea id="listing-text" value={text} onChange={(event) => setText(event.target.value)} className="min-h-40 resize-y" placeholder="Описание товара, материалы, размеры и условия заказа" /></Field></FieldGroup><div className="flex flex-wrap items-center justify-between gap-3"><Button type="button" variant="outline"><ImagePlus data-icon="inline-start" /> Выбрать фото</Button><Button type="submit" variant="secondary">Обновить предпросмотр</Button></div></form>{notice && <p role="status" className="mt-4 text-xs text-muted-foreground">{notice}</p>}</CardContent></Card><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Проверка перед публикацией</CardTitle></CardHeader><CardContent className="space-y-3 text-sm">{['Текст карточки проверен', 'Фото выбраны', 'Цена подтверждена', 'Публикация подтверждена'].map((item) => <div key={item} className="flex items-center gap-3 text-muted-foreground"><span className="size-4 rounded-full border border-white/15" />{item}</div>)}<Separator className="bg-white/10" /><p className="text-xs leading-5 text-muted-foreground">Предпросмотр существует только в текущем окне. Публикация через {channel} пока не запускается.</p></CardContent></Card></div></div>
+  const [error, setError] = useState('')
+  const imageUrls = images.split(/\r?\n/).map((url) => url.trim()).filter(Boolean)
+  const selectedProduct = data.products.find((product) => product.id === productId)
+  const publicationText = [title.trim(), body.trim(), 'Контакт: @clostorelink'].filter(Boolean).join('\n\n')
+
+  function selectProduct(id: string) {
+    setProductId(id)
+    const product = data.products.find((item) => item.id === id)
+    if (!product) {
+      setDraftId('')
+      setTitle('')
+      setBody('')
+      setImages('')
+      setNotice('')
+      setError('')
+      return
+    }
+    setDraftId('')
+    setTitle(product.name)
+    setBody([product.description, product.sizes.length ? `Размеры: ${product.sizes.join(', ')}` : '', product.salePriceRub > 0 ? `Цена: ${formatRub(product.salePriceRub)}` : ''].filter(Boolean).join('\n'))
+    setImages(product.images.join('\n'))
+    setError('')
+  }
+
+  function editDraft(publication: WorkspacePublication) {
+    if (publication.status !== 'draft' && publication.status !== 'failed') return
+    setDraftId(publication.id)
+    setProductId(publication.productId ?? '')
+    setTitle(publication.title)
+    setBody(publication.body)
+    setImages(publication.imageUrls.join('\n'))
+    setNotice('Черновик загружен в редактор.')
+    setError('')
+  }
+
+  function saveDraft(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setNotice('')
+    setError('')
+    startTransition(async () => {
+      try {
+        const result = await saveTelegramPublication({
+          id: draftId || undefined,
+          productId: productId || null,
+          title,
+          body,
+          imageUrls,
+        })
+        if (!result.ok) {
+          setError(result.message)
+          return
+        }
+        setDraftId(result.id)
+        setNotice('Черновик сохранён в Neon.')
+        router.refresh()
+      } catch {
+        setError('Не удалось сохранить черновик. Проверьте заголовок, длину текста и ссылки на фото.')
+      }
+    })
+  }
+
+  function publishDraft() {
+    if (!draftId) {
+      setError('Сначала сохраните черновик.')
+      return
+    }
+    if (!window.confirm('Отправить эту публикацию в канал @clostorelink?')) return
+    setNotice('')
+    setError('')
+    startTransition(async () => {
+      try {
+        const result = await publishTelegramPublication(draftId)
+        if (!result.ok) {
+          setError(result.message)
+          router.refresh()
+          return
+        }
+        setNotice(result.message)
+        router.refresh()
+      } catch {
+        setError('Не удалось завершить отправку. Проверьте историю публикаций перед повторной попыткой.')
+        router.refresh()
+      }
+    })
+  }
+
+  return <div className="flex flex-col gap-5">
+    <SectionHeading title="Telegram" description="Сохраняйте черновики, проверяйте фото и отправляйте публикации в канал." action={<Badge variant="outline" className="w-fit border-emerald-300/20 text-emerald-100"><span className="mr-2 size-1.5 rounded-full bg-emerald-300" />@clostorelink</Badge>} />
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <Card className="border-white/[0.07] bg-card/80 shadow-none">
+        <CardHeader><CardTitle>Редактор публикации</CardTitle><p className="text-xs text-muted-foreground">Черновик сохраняется в Neon; отправка выполняется только после отдельного подтверждения.</p></CardHeader>
+        <CardContent>
+          <form onSubmit={saveDraft} className="space-y-4">
+            <FieldGroup>
+              <Field><FieldLabel htmlFor="publication-product">Заполнить из каталога</FieldLabel><select id="publication-product" value={productId} onChange={(event) => selectProduct(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3 text-sm"><option value="">Новая публикация</option>{data.products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></Field>
+              <Field><FieldLabel htmlFor="listing-title">Заголовок</FieldLabel><Input id="listing-title" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={120} required placeholder="Название модели" /></Field>
+              <Field><FieldLabel htmlFor="listing-text">Описание</FieldLabel><Textarea id="listing-text" value={body} onChange={(event) => setBody(event.target.value)} maxLength={3800} className="min-h-36 resize-y" placeholder="Описание товара, материалы, размеры и условия заказа" /><p className="text-xs text-muted-foreground">До 1000 символов с фото или до 4000 без фото.</p></Field>
+              <Field><FieldLabel htmlFor="listing-images">Фото для Telegram</FieldLabel><Textarea id="listing-images" value={images} onChange={(event) => setImages(event.target.value)} maxLength={20000} rows={3} placeholder="Публичные HTTPS-ссылки, по одной на строку" /><p className="text-xs text-muted-foreground">До 10 публичных HTTPS-ссылок. Фото из выбранного товара подставляются автоматически.</p></Field>
+            </FieldGroup>
+            {imageUrls.length > 0 && <div className="flex flex-wrap gap-2" aria-label="Предпросмотр фотографий">{imageUrls.slice(0, 10).map((url) => <img key={url} src={url} alt={title ? `Фото: ${title}` : 'Фото товара'} loading="lazy" decoding="async" className="size-16 rounded-md border border-white/10 object-cover" />)}</div>}
+            <div className="flex flex-wrap gap-2"><Button type="submit" variant="secondary" disabled={pending}>{pending ? 'Сохраняю…' : draftId ? 'Сохранить черновик' : 'Сохранить черновик'}</Button><Button type="button" onClick={publishDraft} disabled={pending || !draftId}>{pending ? 'Отправляю…' : 'Опубликовать'}</Button></div>
+          </form>
+          {notice && <p role="status" className="mt-4 text-sm text-emerald-200">{notice}</p>}
+          {error && <p role="alert" className="mt-4 text-sm text-destructive">{error}</p>}
+          <section aria-labelledby="telegram-preview-title" className="mt-5 rounded-lg border border-white/[0.07] bg-white/[0.025] p-4">
+            <h3 id="telegram-preview-title" className="text-sm font-medium">Предпросмотр сообщения</h3>
+            <p className="mt-3 whitespace-pre-wrap text-sm leading-6">{publicationText || 'Текст публикации появится здесь.'}</p>
+            {selectedProduct && <p className="mt-2 text-xs text-muted-foreground">Цена продажи из каталога: {selectedProduct.salePriceRub ? formatRub(selectedProduct.salePriceRub) : 'не указана'}</p>}
+          </section>
+        </CardContent>
+      </Card>
+      <Card className="border-white/[0.07] bg-card/80 shadow-none">
+        <CardHeader><CardTitle>История публикаций</CardTitle><p className="text-xs text-muted-foreground">Статусы и ошибки сохраняются в Neon.</p></CardHeader>
+        <CardContent>{data.publications.length ? <ol className="flex flex-col divide-y divide-white/[0.06]">{data.publications.map((publication) => <li key={publication.id} className="py-3 first:pt-0 last:pb-0"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-sm font-medium">{publication.title || 'Без заголовка'}</p><p className="mt-1 text-xs text-muted-foreground">{publicationStatusLabel(publication.status)} · {new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(publication.publishedAt ?? publication.createdAt))}</p></div>{(publication.status === 'draft' || publication.status === 'failed') && <Button type="button" size="sm" variant="ghost" onClick={() => editDraft(publication)}>Изменить</Button>}</div>{publication.error && <p className="mt-2 text-xs text-destructive">{publication.error}</p>}</li>)}</ol> : <p className="text-sm text-muted-foreground">Сохранённых публикаций пока нет.</p>}</CardContent>
+      </Card>
+    </div>
+  </div>
 }
 
 function EditorView() {
@@ -675,7 +804,7 @@ export function WorkspaceView({ section, onNavigate, data, agentTasks, agentUsag
     case 'agent': return <AgentView initialTasks={agentTasks} />
     case 'search': return <SearchView data={data} onNavigate={onNavigate} />
     case 'pricing': return <PricingView data={data} />
-    case 'telegram': return <PublicationView channel="Telegram" />
+    case 'telegram': return <PublicationView data={data} />
     case 'editor': return <LiveEditorView data={data} />
     case 'ai-usage': return <AiUsageView tasks={agentTasks} usage={agentUsage} />
     case 'settings': return <SettingsView integrations={integrations} onNavigate={onNavigate} />

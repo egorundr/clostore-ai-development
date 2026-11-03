@@ -116,9 +116,24 @@ export type WorkspaceProduct = {
   purchaseRub: number
   salePriceRub: number
   sizes: string[]
+  images: string[]
   description: string
   status: string
   listingStatus: string
+}
+
+export type WorkspacePublication = {
+  id: string
+  productId: string | null
+  channel: string
+  title: string
+  body: string
+  imageUrls: string[]
+  status: string
+  externalMessageId: string | null
+  publishedAt: string | null
+  error: string
+  createdAt: string
 }
 
 export type WorkspaceSupplier = {
@@ -183,6 +198,7 @@ export type WorkspaceData = {
   savedSearches: SavedProductSearch[]
   orders: WorkspaceOrder[]
   products: WorkspaceProduct[]
+  publications: WorkspacePublication[]
   suppliers: WorkspaceSupplier[]
   transactions: FinancialTransaction[]
   revenueTrend: { month: string; revenue: number; grossProfit: number; expenses: number; profit: number }[]
