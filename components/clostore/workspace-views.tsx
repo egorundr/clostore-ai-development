@@ -55,7 +55,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Separator } from '@/components/ui/separator'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
-import { runAgentTask } from '@/app/actions/agent'
+import { respondToAgentApprovals, runAgentTask } from '@/app/actions/agent'
 import { testTelegramConnection } from '@/app/actions/integrations'
 import { saveProductSearch, updateProductPricing } from '@/app/actions/workspace'
 import { calculatePricing, formatRub, type PricingInputs } from '@/lib/pricing'
@@ -91,13 +91,47 @@ function statusTone(status: string) {
   return 'border-white/10 text-muted-foreground'
 }
 
+function approvalDetails(approval: AgentTaskPreview['pendingApprovals'][number]) {
+  const input = approval.input
+  const show = (value: unknown) => Array.isArray(value) ? value.join(', ') : String(value ?? '—')
+
+  if (approval.toolName === 'createProductDraft') {
+    return [
+      ['Название', show(input.name)],
+      ['Категория', show(input.category)],
+      ['Источник', show(input.source)],
+      ['Закупка CNY', input.purchasePriceCny == null ? 'не указана' : Number(input.purchasePriceCny).toLocaleString('ru-RU')],
+      ['Себестоимость', input.purchasePriceRub == null ? 'не указана' : formatRub(Number(input.purchasePriceRub))],
+      ['Цена продажи', input.salePriceRub == null ? 'не указана' : formatRub(Number(input.salePriceRub))],
+      ['Размеры', show(input.sizes)],
+    ]
+  }
+  if (approval.toolName === 'updateOrderStatus') {
+    return [
+      ['Заказ', `…${show(input.orderId).slice(-8)}`],
+      ['Новый статус', show(input.status)],
+    ]
+  }
+  return [
+    ['Категория', show(input.category)],
+    ['Сумма', input.amountRub == null ? '—' : formatRub(Number(input.amountRub))],
+    ['Комментарий', show(input.notes)],
+  ]
+}
+
+function approvalTitle(toolName: AgentTaskPreview['pendingApprovals'][number]['toolName']) {
+  if (toolName === 'createProductDraft') return 'Создать черновик товара'
+  if (toolName === 'updateOrderStatus') return 'Изменить статус заказа'
+  return 'Добавить расход'
+}
+
 function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
   const [task, setTask] = useState('')
   const [tasks, setTasks] = useState(initialTasks)
   const [selectedTaskId, setSelectedTaskId] = useState(initialTasks[0]?.id ?? '')
   const [error, setError] = useState('')
   const [pending, startTransition] = useTransition()
-  const suggestions = ['Покажи активные товары в каталоге', 'Какие заказы сейчас в пути?', 'Объясни формулу расчёта цены продажи']
+  const suggestions = ['Покажи активные товары в каталоге', 'Какие заказы сейчас в пути?', 'Создай черновик товара из моего описания']
   const activeTask = tasks.find((item) => item.id === selectedTaskId) ?? tasks[0]
 
   function submitTask(event: React.FormEvent<HTMLFormElement>) {
@@ -109,7 +143,7 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
       try {
         const result = await runAgentTask(prompt)
         if (!result.ok) {
-          setError(result.reason === 'invalid_input' ? 'Введите задачу длиной до 4 000 символов.' : result.reason === 'rate_limited' ? 'Лимит достигнут: не более 10 запросов за час.' : result.reason === 'gateway_billing_required' ? 'AI Gateway требует привязать карту в аккаунте Vercel. После этого можно повторить запрос.' : 'DeepSeek временно недоступен. История попытки сохранена; попробуйте ещё раз позже.')
+          setError(result.reason === 'invalid_input' ? 'Введите задачу длиной до 4 000 символов.' : result.reason === 'rate_limited' ? 'Лимит достигнут: не более 10 запросов за час.' : result.reason === 'api_key_missing' ? 'Добавьте DEEPSEEK_API_KEY в переменные окружения проекта, чтобы включить агента.' : 'DeepSeek API временно недоступен. История попытки сохранена; попробуйте позже.')
           return
         }
         setTasks((current) => [result.task, ...current.filter((item) => item.id !== result.task.id)].slice(0, 20))
@@ -121,21 +155,44 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
     })
   }
 
+  function decideApprovals(approved: boolean) {
+    if (!activeTask?.pendingApprovals.length || pending) return
+    setError('')
+    const decisions = activeTask.pendingApprovals.map(({ approvalId }) => ({ approvalId, approved }))
+    startTransition(async () => {
+      try {
+        const result = await respondToAgentApprovals(activeTask.id, decisions)
+        if (!result.ok) {
+          setError(result.reason === 'stale_approval' ? 'Это подтверждение уже обработано. Обновите страницу и проверьте историю задач.' : 'Не удалось обработать подтверждение. Повторите попытку.')
+          return
+        }
+        setTasks((current) => [result.task, ...current.filter((item) => item.id !== result.task.id)].slice(0, 20))
+        setSelectedTaskId(result.task.id)
+      } catch {
+        setError('Не удалось обработать подтверждение. Проверьте историю задачи перед повтором.')
+      }
+    })
+  }
+
   return (
     <div className="space-y-5">
-      <SectionHeading title="AI-агент" description="Читает каталог и статусы заказов CloStore. Изменения и публикации не выполняет." action={<Badge variant="outline" className="w-fit border-emerald-300/20 text-emerald-100"><span className="mr-2 size-1.5 rounded-full bg-emerald-300" />DeepSeek через AI Gateway</Badge>} />
+      <SectionHeading title="AI-агент" description="Выполняет цепочки действий в CloStore. Изменения в базе — только после вашего подтверждения." action={<Badge variant="outline" className="w-fit border-emerald-300/20 text-emerald-100"><span className="mr-2 size-1.5 rounded-full bg-emerald-300" />DeepSeek API</Badge>} />
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <Card className="flex min-h-[480px] flex-col border-white/[0.07] bg-card/80 shadow-none">
           <CardHeader className="flex flex-row items-center gap-3 border-b border-white/[0.06]">
-            <span className="flex size-9 items-center justify-center rounded-lg bg-white/[0.05] text-muted-foreground"><Sparkles /></span><div><CardTitle>Рабочий диалог</CardTitle><p className="mt-1 text-xs text-muted-foreground">deepseek/deepseek-v4.1-flash · история сохраняется в Neon</p></div>
+            <span className="flex size-9 items-center justify-center rounded-lg bg-white/[0.05] text-muted-foreground"><Sparkles /></span><div><CardTitle>Рабочий диалог</CardTitle><p className="mt-1 text-xs text-muted-foreground">{tasks[0]?.model ?? 'deepseek-flash'} · история сохраняется в Neon</p></div>
           </CardHeader>
           <CardContent className="flex flex-1 flex-col justify-between gap-6 p-5">
             <div className="max-h-[420px] space-y-4 overflow-y-auto pr-1">
               {activeTask ? <>
                 <div className="ml-auto max-w-xl rounded-xl border border-white/[0.08] bg-white/[0.045] p-4"><p className="text-xs text-muted-foreground">Ваша задача</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6">{activeTask.prompt}</p></div>
-                <div className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4"><p className="mb-2 text-xs text-muted-foreground">Ответ агента</p>{activeTask.status === 'completed' ? <p className="whitespace-pre-wrap text-sm leading-6">{activeTask.response}</p> : <p className="text-sm text-muted-foreground">{activeTask.status === 'running' ? 'Задача выполняется…' : 'Запрос завершился ошибкой. Отправьте его повторно.'}</p>}<p className="mt-3 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Moscow' }).format(new Date(activeTask.createdAt))}{activeTask.inputTokens != null && activeTask.outputTokens != null ? ` · ${activeTask.inputTokens + activeTask.outputTokens} токенов` : ''}</p></div>
-              </> : <div className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4"><p className="text-sm leading-6">Опишите цель обычным языком. Агент может искать товары в твоём каталоге и проверять статусы заказов.</p><p className="mt-3 text-xs text-muted-foreground">Интернет-поиск, закупка, публикация и изменение данных пока отключены.</p></div>}
-              {pending && <div role="status" className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4 text-sm text-muted-foreground">DeepSeek готовит ответ…</div>}
+                <div className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4"><p className="mb-2 text-xs text-muted-foreground">Ответ агента</p>{activeTask.response ? <p className="whitespace-pre-wrap text-sm leading-6">{activeTask.response}</p> : <p className="text-sm text-muted-foreground">{activeTask.status === 'running' ? 'Задача выполняется…' : 'Запрос завершился ошибкой. Отправьте его повторно.'}</p>}<p className="mt-3 text-[10px] text-muted-foreground">{new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Moscow' }).format(new Date(activeTask.createdAt))}{activeTask.inputTokens != null && activeTask.outputTokens != null ? ` · ${activeTask.inputTokens + activeTask.outputTokens} токенов` : ''}</p></div>
+                {activeTask.pendingApprovals.length > 0 && <Card className="max-w-xl border-amber-300/20 bg-amber-300/[0.04] shadow-none"><CardHeader><CardTitle className="text-sm">Нужно ваше подтверждение</CardTitle><p className="text-xs text-muted-foreground">Агент не выполнит эти изменения без вашего решения.</p></CardHeader><CardContent className="flex flex-col gap-4">
+                  {activeTask.pendingApprovals.map((approval) => <div key={approval.approvalId} className="rounded-lg border border-white/[0.08] bg-background/50 p-3"><p className="text-sm font-medium">{approvalTitle(approval.toolName)}</p>{approval.reason && <p className="mt-1 text-xs text-muted-foreground">{approval.reason}</p>}<dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs"><>{approvalDetails(approval).map(([label, value]) => <div key={label} className="contents"><dt className="text-muted-foreground">{label}</dt><dd className="break-words text-right">{value}</dd></div>)}</></dl></div>)}
+                  <div className="flex flex-wrap gap-2"><Button type="button" disabled={pending} onClick={() => decideApprovals(true)}><Check data-icon="inline-start" />{pending ? 'Выполняю…' : 'Подтвердить все'}</Button><Button type="button" variant="outline" disabled={pending} onClick={() => decideApprovals(false)}><X data-icon="inline-start" />Отклонить все</Button></div>
+                </CardContent></Card>}
+              </> : <div className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4"><p className="text-sm leading-6">Опишите цель обычным языком. Агент использует каталог, заказы и финансовые инструменты приложения.</p><p className="mt-3 text-xs text-muted-foreground">Создание карточек, изменения статусов заказов и запись расходов — только с подтверждением. Публикации и действия в Telegram или Avito пока недоступны.</p></div>}
+              {pending && <div role="status" className="max-w-xl rounded-xl border border-white/[0.07] bg-white/[0.025] p-4 text-sm text-muted-foreground">DeepSeek выполняет шаг задачи…</div>}
               {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
             </div>
             <form onSubmit={submitTask} className="space-y-3">
@@ -144,13 +201,13 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
                 <FieldLabel htmlFor="agent-task" className="sr-only">Текст задачи</FieldLabel>
                 <Textarea id="agent-task" maxLength={4000} value={task} onChange={(event) => setTask(event.target.value)} placeholder="Опишите задачу для AI-агента…" className="min-h-24 resize-y border-white/10 bg-black/10" />
               </Field>
-              <div className="flex items-center justify-between gap-3"><span className="text-xs text-muted-foreground">До 4 000 символов · без автоматических действий</span><Button type="submit" disabled={!task.trim() || pending}>{pending ? <><LoaderCircle data-icon="inline-start" className="animate-spin" /> Отправка…</> : <><Send data-icon="inline-start" /> Спросить DeepSeek</>}</Button></div>
+              <div className="flex items-center justify-between gap-3"><span className="text-xs text-muted-foreground">До 4 000 символов · действия требуют подтверждения</span><Button type="submit" disabled={!task.trim() || pending}>{pending ? <><LoaderCircle data-icon="inline-start" className="animate-spin" /> Выполняю…</> : <><Send data-icon="inline-start" /> Запустить агента</>}</Button></div>
             </form>
           </CardContent>
         </Card>
         <aside className="space-y-4">
-          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Последние задания</CardTitle><p className="text-xs text-muted-foreground">Сохранённая история · до 20 задач</p></CardHeader><CardContent className="space-y-2">{tasks.length ? tasks.slice(0, 8).map((item) => <button key={item.id} type="button" onClick={() => setSelectedTaskId(item.id)} className={`w-full rounded-lg border p-3 text-left transition-colors ${selectedTaskId === item.id ? 'border-white/15 bg-white/[0.05]' : 'border-white/[0.06] hover:bg-white/[0.03]'}`}><span className="block truncate text-xs font-medium">{item.prompt}</span><span className="mt-1 block text-[10px] text-muted-foreground">{item.status === 'completed' ? 'Готово' : item.status === 'running' ? 'Выполняется' : 'Ошибка'} · {new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeZone: 'Europe/Moscow' }).format(new Date(item.createdAt))}</span></button>) : <div className="rounded-lg border border-dashed border-white/10 p-4 text-center"><MessageSquareText className="mx-auto text-muted-foreground" /><p className="mt-3 text-sm">Сохранённых задач пока нет</p></div>}</CardContent></Card>
-          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Доступ к данным</CardTitle></CardHeader><CardContent className="space-y-3 text-xs leading-5 text-muted-foreground"><p>DeepSeek через AI Gateway получает только данные каталога и заказов, нужные для ответа. Контакты покупателей агенту не передаются.</p><p>Инструменты доступны только для чтения: они не меняют каталог, заказы, финансы или Telegram.</p></CardContent></Card>
+          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Последние задания</CardTitle><p className="text-xs text-muted-foreground">Сохранённая история · до 20 задач</p></CardHeader><CardContent className="space-y-2">{tasks.length ? tasks.slice(0, 8).map((item) => <button key={item.id} type="button" onClick={() => setSelectedTaskId(item.id)} className={`w-full rounded-lg border p-3 text-left transition-colors ${selectedTaskId === item.id ? 'border-white/15 bg-white/[0.05]' : 'border-white/[0.06] hover:bg-white/[0.03]'}`}><span className="block truncate text-xs font-medium">{item.prompt}</span><span className="mt-1 block text-[10px] text-muted-foreground">{item.status === 'completed' ? 'Готово' : item.status === 'running' ? 'Выполняется' : item.status === 'awaiting_approval' ? 'Нужно подтверждение' : 'Ошибка'} · {new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeZone: 'Europe/Moscow' }).format(new Date(item.createdAt))}</span></button>) : <div className="rounded-lg border border-dashed border-white/10 p-4 text-center"><MessageSquareText className="mx-auto text-muted-foreground" /><p className="mt-3 text-sm">Сохранённых задач пока нет</p></div>}</CardContent></Card>
+          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Доступ к данным</CardTitle></CardHeader><CardContent className="space-y-3 text-xs leading-5 text-muted-foreground"><p>DeepSeek API получает только данные каталога, заказов и финансов, необходимые для ответа. Контакты покупателей агенту не передаются.</p><p>Изменения записываются в Neon только после подтверждения. Отказ не меняет данные; Telegram, Avito, закупки и интернет-поиск пока не подключены к агенту.</p></CardContent></Card>
         </aside>
       </div>
     </div>
@@ -382,14 +439,14 @@ function EditorView() {
 function AnalyticsView() {
   const revenue = demoOrders.reduce((total, order) => total + order.salePrice, 0)
   const profit = demoOrders.reduce((total, order) => total + order.salePrice - order.cost, 0)
-  return <div className="space-y-5"><SectionHeading title="Аналитика" description="Показатели рассчитываются на основе заказов и продаж." action={<Button variant="outline">Период: демо</Button>} /><DemoNotice /><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><SmallStat icon={Wallet} label="Выручка" value={formatRub(revenue)} /><SmallStat icon={ArrowRight} label="Валовая прибыль" value={formatRub(profit)} /><SmallStat icon={Package} label="Количество заказов" value={String(demoOrders.length)} /><SmallStat icon={Clock3} label="Средний чек" value={formatRub(revenue / Math.max(demoOrders.length, 1))} /></div><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Нет подключённ��й истории продаж</CardTitle><p className="text-xs text-muted-foreground">Графики по месяцам появятся после сохранения реальных заказов.</p></CardHeader><CardContent><div className="flex min-h-52 flex-col items-center justify-center rounded-lg border border-dashed border-white/10 text-center"><FileSpreadsheet className="text-muted-foreground" /><p className="mt-3 text-sm font-medium">Реальные отчёты пока недоступны</p><p className="mt-1 max-w-md text-xs leading-5 text-muted-foreground">Сводные карточки выше вычислены только по четырём демонстрационным заказам. Конверсия и просмотры не подставляются без данных.</p></div></CardContent></Card></div>
+  return <div className="space-y-5"><SectionHeading title="Аналитика" description="Показатели рассчитываются на основе заказов и продаж." action={<Button variant="outline">Период: демо</Button>} /><DemoNotice /><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><SmallStat icon={Wallet} label="Выручка" value={formatRub(revenue)} /><SmallStat icon={ArrowRight} label="Валовая прибыль" value={formatRub(profit)} /><SmallStat icon={Package} label="Количество заказов" value={String(demoOrders.length)} /><SmallStat icon={Clock3} label="Средний чек" value={formatRub(revenue / Math.max(demoOrders.length, 1))} /></div><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Нет подключённ��й истор��и продаж</CardTitle><p className="text-xs text-muted-foreground">Графики по месяцам появятся после сохранения реальных заказов.</p></CardHeader><CardContent><div className="flex min-h-52 flex-col items-center justify-center rounded-lg border border-dashed border-white/10 text-center"><FileSpreadsheet className="text-muted-foreground" /><p className="mt-3 text-sm font-medium">Реальные отчёты пока недоступны</p><p className="mt-1 max-w-md text-xs leading-5 text-muted-foreground">Сводные карточки выше вычислены только по четырём демонстрационным заказам. Конверсия и просмотры не подставляются без данных.</p></div></CardContent></Card></div>
 }
 
 function AiUsageView({ tasks }: { tasks: AgentTaskPreview[] }) {
   const completed = tasks.filter((task) => task.status === 'completed')
   const inputTokens = completed.reduce((total, task) => total + (task.inputTokens ?? 0), 0)
   const outputTokens = completed.reduce((total, task) => total + (task.outputTokens ?? 0), 0)
-  return <div className="space-y-5"><SectionHeading title="Ра��ходы на AI" description="Фактическое потребление токенов в последних сохранённых задачах." /><div className="grid gap-3 sm:grid-cols-3"><SmallStat icon={MessageSquareText} label="Выполнено задач" value={String(completed.length)} /><SmallStat icon={ArrowRight} label="Входящие токены" value={inputTokens.toLocaleString('ru-RU')} /><SmallStat icon={Sparkles} label="Исходящие токены" value={outputTokens.toLocaleString('ru-RU')} /></div><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>DeepSeek через AI Gateway</CardTitle><p className="text-xs text-muted-foreground">Показаны последние {tasks.length} задач из сохранённой истории.</p></CardHeader><CardContent className="space-y-4"><div className="rounded-lg border border-white/[0.07] p-4"><div className="flex justify-between text-xs"><span className="text-muted-foreground">Токены в истории</span><span>{(inputTokens + outputTokens).toLocaleString('ru-RU')}</span></div><Progress value={0} className="mt-3 h-1.5" /><p className="mt-3 text-xs leading-5 text-muted-foreground">Стоимость не рассчитывается по приблизительным тарифам. Для точной суммы используйте отчёт расходов AI Gateway; приложение пока сохраняет фактическое число токенов каждого запроса.</p></div>{completed.length === 0 && <p className="text-sm text-muted-foreground">После первого запроса появятся фактические счётчики токенов.</p>}</CardContent></Card></div>
+  return <div className="space-y-5"><SectionHeading title="Ра��ходы н�� AI" description="Фактическое потребление токенов в последних сохранённых задачах." /><div className="grid gap-3 sm:grid-cols-3"><SmallStat icon={MessageSquareText} label="Выполнено задач" value={String(completed.length)} /><SmallStat icon={ArrowRight} label="Входящие токены" value={inputTokens.toLocaleString('ru-RU')} /><SmallStat icon={Sparkles} label="Исходящие токены" value={outputTokens.toLocaleString('ru-RU')} /></div><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>DeepSeek API</CardTitle><p className="text-xs text-muted-foreground">Показаны последние {tasks.length} задач из сохранённой истории.</p></CardHeader><CardContent className="space-y-4"><div className="rounded-lg border border-white/[0.07] p-4"><div className="flex justify-between text-xs"><span className="text-muted-foreground">Токены в истории</span><span>{(inputTokens + outputTokens).toLocaleString('ru-RU')}</span></div><Progress value={0} className="mt-3 h-1.5" /><p className="mt-3 text-xs leading-5 text-muted-foreground">Стоимость не рассчитывается по приблизительным тарифам. Сверяйте её в личном кабинете DeepSeek; приложение сохраняет фактическое число токенов каждого завершённого запроса.</p></div>{completed.length === 0 && <p className="text-sm text-muted-foreground">После первого запроса появятся фактические счётчики токенов.</p>}</CardContent></Card></div>
 }
 
 function SettingsView({ integrations }: { integrations: IntegrationStatus[] }) {

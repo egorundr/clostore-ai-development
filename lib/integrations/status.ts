@@ -19,19 +19,11 @@ export function getIntegrationStatuses(): IntegrationStatus[] {
       testProvider: null,
     },
     {
-      name: 'Vercel AI Gateway',
-      detail: 'Подключён к проекту; вызовы выполняются только на сервере.',
-      state: 'Подключён',
-      configured: true,
-      requiredVariables: [],
-      testProvider: null,
-    },
-    {
       name: 'DeepSeek API',
-      detail: 'Модель deepseek/deepseek-v4.1-flash вызывается через подключённый AI Gateway.',
-      state: 'Готов',
-      configured: true,
-      requiredVariables: [],
+      detail: 'Запросы к DeepSeek выполняются на сервере; ключ читается из переменных окружения и не сохраняется в браузере.',
+      state: isConfigured('DEEPSEEK_API_KEY') ? `Готов · ${process.env.DEEPSEEK_MODEL?.trim() || 'deepseek-flash'}` : 'Нужен серверный API-ключ',
+      configured: isConfigured('DEEPSEEK_API_KEY'),
+      requiredVariables: ['DEEPSEEK_API_KEY'],
       testProvider: null,
     },
     {

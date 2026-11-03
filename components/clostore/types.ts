@@ -140,11 +140,19 @@ export type IntegrationStatus = {
   testProvider: 'telegram' | null
 }
 
+export type AgentPendingApproval = {
+  approvalId: string
+  toolName: 'createProductDraft' | 'updateOrderStatus' | 'recordExpense'
+  input: Record<string, unknown>
+  reason?: string
+}
+
 export type AgentTaskPreview = {
   id: string
   prompt: string
   response: string
-  status: 'running' | 'completed' | 'failed'
+  pendingApprovals: AgentPendingApproval[]
+  status: 'running' | 'awaiting_approval' | 'completed' | 'failed'
   model: string
   inputTokens: number | null
   outputTokens: number | null
