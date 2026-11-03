@@ -440,7 +440,7 @@ const marketplaceLabels: Record<string, string> = {
   custom: 'Свой источник',
 }
 
-function SearchView({ data, onNavigate, pinduoduoConfigured }: { data: WorkspaceData; onNavigate: (section: SectionId) => void; pinduoduoConfigured: boolean }) {
+function SearchView({ data, onNavigate }: { data: WorkspaceData; onNavigate: (section: SectionId) => void }) {
   const [notice, setNotice] = useState('')
   const [isPending, startTransition] = useTransition()
   const [history, setHistory] = useState(data.savedSearches)
@@ -463,14 +463,14 @@ function SearchView({ data, onNavigate, pinduoduoConfigured }: { data: Workspace
 
   return (
     <div className="space-y-5">
-      <SectionHeading title="Поиск товаров" description="Ищите товары Pinduoduo по словам или фото и добавляйте выбранное в очередь проверки." action={<Button variant="outline" onClick={() => onNavigate('settings')}><Settings2 data-icon="inline-start" /> Источники</Button>} />
-      <div className="rounded-lg border border-sky-400/15 bg-sky-400/[0.04] p-3 text-xs leading-5 text-sky-100/75">Pinduoduo подключается через API с ключами проекта. Остальные площадки открываются отдельно; обход ограничений и автоматический скрейпинг не используются.</div>
-      <PinduoduoSearchPanel configured={pinduoduoConfigured} />
+      <SectionHeading title="Поиск товаров" description="Откройте официальный поиск Pinduoduo, затем импортируйте товар в очередь и создавайте публикации из шаблонов." action={<Button variant="outline" onClick={() => onNavigate('settings')}><Settings2 data-icon="inline-start" /> Источники</Button>} />
+      <div className="rounded-lg border border-sky-400/15 bg-sky-400/[0.04] p-3 text-xs leading-5 text-sky-100/75">Поиск выполняется вручную в официальном приложении или на сайте. Clostore не входит в аккаунт, не собирает данные страницы и не обходит проверки площадки.</div>
+      <PinduoduoSearchPanel />
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Параметры поиска</CardTitle><p className="text-xs text-muted-foreground">Точные условия помогут сократить лишние результаты</p></CardHeader>
           <CardContent><form onSubmit={requestSearch} className="space-y-5">
             <FieldGroup className="grid gap-4 md:grid-cols-2">
-              <Field className="md:col-span-2"><FieldLabel htmlFor="search-query">Что ищем</FieldLabel><Input id="search-query" name="query" required maxLength={240} placeholder="Например, мужская куртка в стиле archive" /></Field>
+              <Field className="md:col-span-2"><FieldLabel htmlFor="search-query">Что ищем</FieldLabel><Input id="search-query" name="query" required maxLength={240} placeholder="Например, мужская куртка в стил�� archive" /></Field>
               <Field><FieldLabel htmlFor="search-category">Категория</FieldLabel><Input id="search-category" name="category" maxLength={120} placeholder="Верхняя одежда" /></Field>
               <Field><FieldLabel htmlFor="search-style">Стиль</FieldLabel><Input id="search-style" name="style" maxLength={120} placeholder="Avant-garde, archive…" /></Field>
               <Field><FieldLabel htmlFor="search-min">Цена от, CNY</FieldLabel><Input id="search-min" name="minPriceCny" type="number" min="0" step="0.01" placeholder="80" /></Field>
@@ -505,7 +505,7 @@ function SearchView({ data, onNavigate, pinduoduoConfigured }: { data: Workspace
           <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>История запросов</CardTitle><p className="text-xs text-muted-foreground">Последние 20 запросов этого аккаунта</p></CardHeader><CardContent className="space-y-2">
             {history.length ? history.map((search) => <button key={search.id} type="button" onClick={() => setActiveSearch(search)} className="flex w-full items-start justify-between gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-white/[0.04]"><span className="min-w-0"><span className="block truncate text-sm">{search.query}</span><span className="mt-1 block text-xs text-muted-foreground">{new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(search.createdAt))}</span></span><Clock3 className="mt-0.5 size-4 shrink-0 text-muted-foreground" /></button>) : <p className="text-sm text-muted-foreground">Пока нет сохранённых запросов.</p>}
           </CardContent></Card>
-          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Доступ к источникам</CardTitle></CardHeader><CardContent className="text-xs leading-5 text-muted-foreground">Автоматический поиск работает только через настроенный API Pinduoduo. Для Grailed и собственных источников приложение сохраняет запрос и открывает сайт вручную.</CardContent></Card>
+          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Доступ к источникам</CardTitle></CardHeader><CardContent className="text-xs leading-5 text-muted-foreground">Поиск открывается в официальном Pinduoduo, а импорт использует только скопированные вами данные. Для Grailed и собственных источников сохраняйте запрос и открывайте сайт вручную.</CardContent></Card>
         </div>
       </div>
     </div>
@@ -822,7 +822,7 @@ export function WorkspaceView({ section, onNavigate, data, agentTasks, agentUsag
     case 'suppliers': return <LiveSuppliersView data={data} />
     case 'analytics': return <LiveAnalyticsView data={data} onNavigate={onNavigate} />
     case 'agent': return <AgentView initialTasks={agentTasks} />
-    case 'search': return <SearchView data={data} onNavigate={onNavigate} pinduoduoConfigured={integrations.some((integration) => integration.name === 'Pinduoduo Open API' && integration.configured)} />
+    case 'search': return <SearchView data={data} onNavigate={onNavigate} />
     case 'pricing': return <PricingView data={data} />
     case 'telegram': return <PublicationView data={data} />
     case 'editor': return <LiveEditorView data={data} />

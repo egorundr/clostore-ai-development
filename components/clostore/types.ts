@@ -146,16 +146,6 @@ export type PublicationTemplate = {
   updatedAt: string
 }
 
-export type PinduoduoSearchResult = {
-  goodsId: string
-  name: string
-  priceCny: number | null
-  imageUrl: string | null
-  productUrl: string
-  sellerName: string | null
-  salesHint: string | null
-}
-
 export type WorkspaceSupplier = {
   id: string
   name: string
