@@ -22,10 +22,27 @@ interface ImageUploadFieldProps {
   onChange: (urls: string[]) => void
   name?: string
   className?: string
+  maxImages?: number
+  maxImageSizeBytes?: number
+  allowedMimeTypes?: string[]
 }
 
-export function ImageUploadField({ id, label, value, onChange, name, className }: ImageUploadFieldProps) {
+export function ImageUploadField({
+  id,
+  label,
+  value,
+  onChange,
+  name,
+  className,
+  maxImages = MAX_IMAGES,
+  maxImageSizeBytes = MAX_IMAGE_SIZE,
+  allowedMimeTypes = Object.keys(FILE_EXTENSIONS),
+}: ImageUploadFieldProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const maxSizeLabel = maxImageSizeBytes < 1024 * 1024
+    ? `${Math.floor(maxImageSizeBytes / 1024)} КБ`
+    : `${Math.floor(maxImageSizeBytes / (1024 * 1024))} МБ`
+  const allowedFormatLabel = allowedMimeTypes.map((type) => ({ 'image/jpeg': 'JPEG', 'image/png': 'PNG', 'image/webp': 'WebP' }[type] ?? type)).join(', ')
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState<number | null>(null)
   const [error, setError] = useState('')
@@ -35,15 +52,15 @@ export function ImageUploadField({ id, label, value, onChange, name, className }
     const files = Array.from(input.files ?? [])
     if (!files.length) return
 
-    if (files.length > MAX_IMAGES - value.length) {
-      setError('Можно добавить не больше 10 фотографий.')
+    if (files.length > maxImages - value.length) {
+      setError(`Можно добавить не больше ${maxImages} фотографий.`)
       input.value = ''
       return
     }
 
-    const invalidFile = files.find((file) => !FILE_EXTENSIONS[file.type] || file.size > MAX_IMAGE_SIZE)
+    const invalidFile = files.find((file) => !allowedMimeTypes.includes(file.type) || file.size > maxImageSizeBytes)
     if (invalidFile) {
-      setError('Поддерживаются JPEG, PNG и WebP размером до 8 МБ каждый.')
+      setError(`Поддерживаются ${allowedFormatLabel}; размер — до ${maxSizeLabel} каждый.`)
       input.value = ''
       return
     }
@@ -54,7 +71,9 @@ export function ImageUploadField({ id, label, value, onChange, name, className }
 
     try {
       for (const [index, file] of files.entries()) {
-        const blob = await upload(`clostore/images/${crypto.randomUUID()}.${FILE_EXTENSIONS[file.type]}`, file, {
+        const extension = FILE_EXTENSIONS[file.type]
+        if (!extension || !allowedMimeTypes.includes(file.type)) throw new Error('Unsupported image type')
+        const blob = await upload(`clostore/images/${crypto.randomUUID()}.${extension}`, file, {
           access: 'public',
           handleUploadUrl: '/api/uploads/images',
           contentType: file.type,
@@ -76,8 +95,8 @@ export function ImageUploadField({ id, label, value, onChange, name, className }
 
   function updateUrls(raw: string) {
     const urls = [...new Set(raw.split(/\r?\n/).map((url) => url.trim()).filter(Boolean))]
-    if (urls.length > MAX_IMAGES) {
-      setError('Можно добавить не больше 10 фотографий.')
+    if (urls.length > maxImages) {
+      setError(`Можно добавить не больше ${maxImages} фотографий.`)
       return
     }
     setError('')
@@ -97,18 +116,18 @@ export function ImageUploadField({ id, label, value, onChange, name, className }
           ref={fileInputRef}
           id={`${id}-files`}
           type="file"
-          accept="image/jpeg,image/png,image/webp"
-          multiple
+          accept={allowedMimeTypes.join(',')}
+          multiple={maxImages > 1}
           tabIndex={-1}
           aria-hidden="true"
           className="sr-only"
           onChange={handleFilesChange}
         />
-        <Button type="button" variant="outline" size="sm" disabled={uploading || value.length >= MAX_IMAGES} onClick={() => fileInputRef.current?.click()}>
+        <Button type="button" variant="outline" size="sm" disabled={uploading || value.length >= maxImages} onClick={() => fileInputRef.current?.click()}>
           {uploading ? <LoaderCircle data-icon="inline-start" className="animate-spin" /> : <ImagePlus data-icon="inline-start" />}
           {uploading ? `Загружаю ${progress ?? 0}%` : 'Загрузить фото'}
         </Button>
-        <p className="text-xs text-muted-foreground">JPEG, PNG или WebP · до 8 МБ · максимум 10</p>
+        <p className="text-xs text-muted-foreground">{allowedFormatLabel} · до {maxSizeLabel} · максимум {maxImages}</p>
       </div>
       {name && <input type="hidden" name={name} value={value.join('\n')} />}
       <Textarea

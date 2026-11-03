@@ -2,7 +2,7 @@ import 'server-only'
 
 import { and, count, desc, eq, gte, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { financialTransactions, orderStatusHistory, orders, productSearches, products, publications, suppliers } from '@/lib/db/schema'
+import { financialTransactions, orderStatusHistory, orders, productSearches, products, publicationTemplates, publications, suppliers } from '@/lib/db/schema'
 import type { OrderStatus, WorkspaceData } from '@/components/clostore/types'
 
 const orderStatuses: OrderStatus[] = [
@@ -34,7 +34,7 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
   since.setUTCMonth(since.getUTCMonth() - 5, 1)
   since.setUTCHours(0, 0, 0, 0)
 
-  const [orderRows, productRows, publicationRows, supplierRows, searchRows, historyRows, transactionRows, orderTotals, transactionTotals, reviewTotals, publishedTotals, trendRows, expenseTrendRows] = await Promise.all([
+  const [orderRows, productRows, publicationRows, supplierRows, searchRows, historyRows, transactionRows, orderTotals, transactionTotals, reviewTotals, publishedTotals, trendRows, expenseTrendRows, templateRows] = await Promise.all([
     db.select().from(orders).where(eq(orders.userId, userId)).orderBy(desc(orders.createdAt)).limit(100),
     db.select().from(products).where(eq(products.userId, userId)).orderBy(desc(products.createdAt)).limit(200),
     db.select().from(publications).where(eq(publications.userId, userId)).orderBy(desc(publications.createdAt)).limit(100),
@@ -62,6 +62,7 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
       .from(financialTransactions)
       .where(and(eq(financialTransactions.userId, userId), gte(financialTransactions.occurredAt, since)))
       .orderBy(financialTransactions.occurredAt),
+    db.select().from(publicationTemplates).where(eq(publicationTemplates.userId, userId)).orderBy(desc(publicationTemplates.updatedAt)).limit(100),
   ])
 
   const supplierNames = new Map(supplierRows.map((supplier) => [supplier.id, supplier.name]))
@@ -186,7 +187,16 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
       error: publication.error,
       createdAt: publication.createdAt.toISOString(),
     })),
-    suppliers: supplierRows.map((supplier) => ({
+    publicationTemplates: templateRows.map((template) => ({
+      id: template.id,
+      name: template.name,
+      title: template.title,
+      body: template.body,
+      imageUrls: Array.isArray(template.imageUrls) ? template.imageUrls : [],
+      createdAt: template.createdAt.toISOString(),
+      updatedAt: template.updatedAt.toISOString(),
+    })),
+    suppliers: supplierRows.map((supplier) => ({ 
       id: supplier.id,
       name: supplier.name,
       platform: supplier.platform || 'Не указана',

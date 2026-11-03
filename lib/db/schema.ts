@@ -168,3 +168,14 @@ export const publications = pgTable('publications', {
   createdAt: timestamp('createdAt').notNull().defaultNow(),
   updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 }, (table) => [index('publications_user_created_idx').on(table.userId, table.createdAt)])
+
+export const publicationTemplates = pgTable('publication_templates', {
+  id: text('id').primaryKey(),
+  userId: text('userId').notNull(),
+  name: text('name').notNull(),
+  title: text('title').notNull(),
+  body: text('body').notNull(),
+  imageUrls: jsonb('imageUrls').$type<string[]>().notNull().default([]),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+  updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+}, (table) => [index('publication_templates_user_updated_idx').on(table.userId, table.updatedAt)])

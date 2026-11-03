@@ -65,6 +65,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { cancelAgentTask, respondToAgentApprovals, runAgentTask } from '@/app/actions/agent'
 import { publishTelegramPublication, saveTelegramPublication, testTelegramConnection } from '@/app/actions/integrations'
 import { saveProductSearch, updateProductPricing } from '@/app/actions/workspace'
+import { PinduoduoSearchPanel } from './pinduoduo-search-panel'
+import { PublicationTemplateTools } from './publication-template-tools'
 import { calculatePricing, formatRub, type PricingInputs } from '@/lib/pricing'
 import { demoOrders, demoProducts } from './demo-data'
 import { ImageUploadField } from './image-upload-field'
@@ -438,7 +440,7 @@ const marketplaceLabels: Record<string, string> = {
   custom: 'Свой источник',
 }
 
-function SearchView({ data, onNavigate }: { data: WorkspaceData; onNavigate: (section: SectionId) => void }) {
+function SearchView({ data, onNavigate, pinduoduoConfigured }: { data: WorkspaceData; onNavigate: (section: SectionId) => void; pinduoduoConfigured: boolean }) {
   const [notice, setNotice] = useState('')
   const [isPending, startTransition] = useTransition()
   const [history, setHistory] = useState(data.savedSearches)
@@ -461,8 +463,9 @@ function SearchView({ data, onNavigate }: { data: WorkspaceData; onNavigate: (se
 
   return (
     <div className="space-y-5">
-      <SectionHeading title="Поиск товаров" description="Сохраните критерии и откройте поиск на выбранных площадках." action={<Button variant="outline" onClick={() => onNavigate('settings')}><Settings2 data-icon="inline-start" /> Источники</Button>} />
-      <div className="rounded-lg border border-sky-400/15 bg-sky-400/[0.04] p-3 text-xs leading-5 text-sky-100/75">Запросы сохраняются в вашем рабочем пространстве. Результаты открываются на официальных сайтах для ручного просмотра — автоматический сбор и импорт не выполняются.</div>
+      <SectionHeading title="Поиск товаров" description="Ищите товары Pinduoduo по словам или фото и добавляйте выбранное в очередь проверки." action={<Button variant="outline" onClick={() => onNavigate('settings')}><Settings2 data-icon="inline-start" /> Источники</Button>} />
+      <div className="rounded-lg border border-sky-400/15 bg-sky-400/[0.04] p-3 text-xs leading-5 text-sky-100/75">Pinduoduo подключается через API с ключами проекта. Остальные площадки открываются отдельно; обход ограничений и автоматический скрейпинг не используются.</div>
+      <PinduoduoSearchPanel configured={pinduoduoConfigured} />
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Параметры поиска</CardTitle><p className="text-xs text-muted-foreground">Точные условия помогут сократить лишние результаты</p></CardHeader>
           <CardContent><form onSubmit={requestSearch} className="space-y-5">
@@ -502,7 +505,7 @@ function SearchView({ data, onNavigate }: { data: WorkspaceData; onNavigate: (se
           <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>История запросов</CardTitle><p className="text-xs text-muted-foreground">Последние 20 запросов этого аккаунта</p></CardHeader><CardContent className="space-y-2">
             {history.length ? history.map((search) => <button key={search.id} type="button" onClick={() => setActiveSearch(search)} className="flex w-full items-start justify-between gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-white/[0.04]"><span className="min-w-0"><span className="block truncate text-sm">{search.query}</span><span className="mt-1 block text-xs text-muted-foreground">{new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(search.createdAt))}</span></span><Clock3 className="mt-0.5 size-4 shrink-0 text-muted-foreground" /></button>) : <p className="text-sm text-muted-foreground">Пока нет сохранённых запросов.</p>}
           </CardContent></Card>
-          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Безопасный сбор</CardTitle></CardHeader><CardContent className="text-xs leading-5 text-muted-foreground">Площадки открываются отдельно. Проверяйте правила площадки и используйте только разрешённые способы доступа; автоматизированный сбор в приложении отключён.</CardContent></Card>
+          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Доступ к источникам</CardTitle></CardHeader><CardContent className="text-xs leading-5 text-muted-foreground">Автоматический поиск работает только через настроенный API Pinduoduo. Для Grailed и собственных источников приложение сохраняет запрос и открывает сайт вручную.</CardContent></Card>
         </div>
       </div>
     </div>
@@ -556,7 +559,7 @@ function OrdersView() {
     {message && <p role="status" className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-xs text-muted-foreground">{message}</p>}
     <div className="grid gap-3 sm:grid-cols-3"><SmallStat icon={Clock3} label="Ожидают действия" value={String(demoOrders.filter((order) => order.status.includes('Ожидает')).length)} /><SmallStat icon={Package} label="В обработке" value={String(demoOrders.filter((order) => ['Заказан у поставщика', 'В пути'].includes(order.status)).length)} /><SmallStat icon={Truck} label="Демо-заказов" value={String(demoOrders.length)} /></div>
     <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="relative w-full sm:max-w-sm"><Search className="absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Покупатель, товар, номер заказа" className="pl-9" /></div><Button variant="outline" size="sm"><ArrowDownToLine data-icon="inline-start" /> Экспорт</Button></CardContent><div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Заказ</TableHead><TableHead>Покупатель / товар</TableHead><TableHead>Этап</TableHead><TableHead>Поставщик</TableHead><TableHead className="text-right">Сумма</TableHead></TableRow></TableHeader><TableBody>{filtered.map((order) => <TableRow key={order.id}><TableCell><span className="font-medium">{order.id}</span><span className="mt-1 block text-xs text-muted-foreground">{order.createdAt}</span></TableCell><TableCell><span className="block">{order.customer}</span><span className="mt-1 block text-xs text-muted-foreground">{order.product} · {order.size}</span></TableCell><TableCell><Badge variant="outline" className={statusTone(order.status)}>{order.status}</Badge>{order.tracking && <span className="mt-1 block text-[10px] text-muted-foreground">Трек: {order.tracking}</span>}</TableCell><TableCell className="text-muted-foreground">{order.supplier}</TableCell><TableCell className="text-right"><span className="font-medium tabular-nums">{formatRub(order.salePrice)}</span><span className="mt-1 block text-xs text-muted-foreground">прибыль {formatRub(order.salePrice - order.cost)}</span></TableCell></TableRow>)}</TableBody></Table></div></Card>
-    <Dialog open={dialogOpen} onOpenChange={setDialogOpen}><DialogContent className="max-w-lg border-white/10 bg-[#1b1d20]"><DialogHeader><DialogTitle>Новый заказ</DialogTitle><DialogDescription>Заполните основные поля. До подключения базы заказ останется только в форме.</DialogDescription></DialogHeader><form onSubmit={saveDraft} className="space-y-4"><FieldGroup className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="order-customer">Покупатель</FieldLabel><Input id="order-customer" required placeholder="Имя клиента" /></Field><Field><FieldLabel htmlFor="order-contact">Контакт</FieldLabel><Input id="order-contact" required placeholder="Телефон или Telegram" /></Field><Field className="sm:col-span-2"><FieldLabel htmlFor="order-product">Товар</FieldLabel><Input id="order-product" required placeholder="Название товара" /></Field><Field><FieldLabel htmlFor="order-size">Размер</FieldLabel><Input id="order-size" placeholder="M" /></Field><Field><FieldLabel htmlFor="order-sale">Цена продажи, ₽</FieldLabel><Input id="order-sale" required type="number" min="1" placeholder="12900" /></Field></FieldGroup><DialogFooter><Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Отмена</Button><Button type="submit">Проверить форму</Button></DialogFooter></form></DialogContent></Dialog>
+    <Dialog open={dialogOpen} onOpenChange={setDialogOpen}><DialogContent className="max-w-lg border-white/10 bg-[#1b1d20]"><DialogHeader><DialogTitle>Новый заказ</DialogTitle><DialogDescription>Заполните основные поля. До подключения базы заказ останется только в форме.</DialogDescription></DialogHeader><form onSubmit={saveDraft} className="space-y-4"><FieldGroup className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="order-customer">Покупатель</FieldLabel><Input id="order-customer" required placeholder="Имя клиента" /></Field><Field><FieldLabel htmlFor="order-contact">Контакт</FieldLabel><Input id="order-contact" required placeholder="Телефон ил�� Telegram" /></Field><Field className="sm:col-span-2"><FieldLabel htmlFor="order-product">Товар</FieldLabel><Input id="order-product" required placeholder="Название товара" /></Field><Field><FieldLabel htmlFor="order-size">Размер</FieldLabel><Input id="order-size" placeholder="M" /></Field><Field><FieldLabel htmlFor="order-sale">Цена продажи, ₽</FieldLabel><Input id="order-sale" required type="number" min="1" placeholder="12900" /></Field></FieldGroup><DialogFooter><Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Отмена</Button><Button type="submit">Проверить форму</Button></DialogFooter></form></DialogContent></Dialog>
   </div>
 }
 
@@ -730,6 +733,23 @@ function PublicationView({ data }: { data: WorkspaceData }) {
       <Card className="border-white/[0.07] bg-card/80 shadow-none">
         <CardHeader><CardTitle>Редактор публикации</CardTitle><p className="text-xs text-muted-foreground">Черновик сохраняется в Neon; отправка выполняется только после отдельного подтверждения.</p></CardHeader>
         <CardContent>
+          <PublicationTemplateTools
+            initialTemplates={data.publicationTemplates}
+            products={data.products}
+            title={title}
+            body={body}
+            imageUrls={imageUrls}
+            onDraftCreated={(publication) => {
+              setDraftId(publication.id)
+              setProductId(publication.productId)
+              setTitle(publication.title)
+              setBody(publication.body)
+              setImages(publication.imageUrls.join('\n'))
+              setNotice('Черновик создан из шаблона и сохранён в Neon.')
+              setError('')
+              router.refresh()
+            }}
+          />
           <form onSubmit={saveDraft} className="space-y-4">
             <FieldGroup>
               <Field><FieldLabel htmlFor="publication-product">Заполнить из каталога</FieldLabel><select id="publication-product" value={productId} onChange={(event) => selectProduct(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3 text-sm"><option value="">Новая публикация</option>{data.products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></Field>
@@ -802,7 +822,7 @@ export function WorkspaceView({ section, onNavigate, data, agentTasks, agentUsag
     case 'suppliers': return <LiveSuppliersView data={data} />
     case 'analytics': return <LiveAnalyticsView data={data} onNavigate={onNavigate} />
     case 'agent': return <AgentView initialTasks={agentTasks} />
-    case 'search': return <SearchView data={data} onNavigate={onNavigate} />
+    case 'search': return <SearchView data={data} onNavigate={onNavigate} pinduoduoConfigured={integrations.some((integration) => integration.name === 'Pinduoduo Open API' && integration.configured)} />
     case 'pricing': return <PricingView data={data} />
     case 'telegram': return <PublicationView data={data} />
     case 'editor': return <LiveEditorView data={data} />

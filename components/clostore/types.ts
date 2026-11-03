@@ -136,6 +136,26 @@ export type WorkspacePublication = {
   createdAt: string
 }
 
+export type PublicationTemplate = {
+  id: string
+  name: string
+  title: string
+  body: string
+  imageUrls: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+export type PinduoduoSearchResult = {
+  goodsId: string
+  name: string
+  priceCny: number | null
+  imageUrl: string | null
+  productUrl: string
+  sellerName: string | null
+  salesHint: string | null
+}
+
 export type WorkspaceSupplier = {
   id: string
   name: string
@@ -199,6 +219,7 @@ export type WorkspaceData = {
   orders: WorkspaceOrder[]
   products: WorkspaceProduct[]
   publications: WorkspacePublication[]
+  publicationTemplates: PublicationTemplate[]
   suppliers: WorkspaceSupplier[]
   transactions: FinancialTransaction[]
   revenueTrend: { month: string; revenue: number; grossProfit: number; expenses: number; profit: number }[]
