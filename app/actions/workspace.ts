@@ -43,6 +43,22 @@ function readOptionalUrl(formData: FormData, key: string) {
   }
 }
 
+function readImageUrls(formData: FormData) {
+  const raw = readText(formData, 'images', 20_000)
+  const urls = raw.split(/\r?\n/).map((value) => value.trim()).filter(Boolean)
+  if (urls.length > 10) throw new Error('Invalid input')
+
+  return [...new Set(urls)].map((value) => {
+    try {
+      const url = new URL(value)
+      if (url.protocol !== 'https:' || url.username || url.password || url.hostname === 'localhost' || url.hostname.endsWith('.local')) throw new Error('Invalid URL')
+      return url.toString()
+    } catch {
+      throw new Error('Invalid input')
+    }
+  })
+}
+
 function readOptionalDate(formData: FormData, key: string) {
   const raw = readText(formData, key, 10)
   if (!raw) return null
@@ -227,6 +243,7 @@ export async function createProduct(formData: FormData) {
   const purchasePriceRub = readAmount(formData, 'purchasePriceRub')
   const salePriceRub = readAmount(formData, 'salePriceRub')
   const sizes = [...new Set(readText(formData, 'sizes', 240).split(',').map((size) => size.trim()).filter(Boolean))].slice(0, 20)
+  const images = readImageUrls(formData)
   const description = readText(formData, 'description', 8000)
   let sourceUrl: string | null = null
 
@@ -273,6 +290,7 @@ export async function createProduct(formData: FormData) {
       purchasePriceRub: String(purchasePriceRub),
       salePriceRub: String(salePriceRub),
       sizes,
+      images,
       description,
       status: 'review',
       listingStatus: 'unpublished',
@@ -296,6 +314,7 @@ export async function updateProduct(productId: string, formData: FormData) {
   const purchasePriceRub = readAmount(formData, 'purchasePriceRub')
   const salePriceRub = readAmount(formData, 'salePriceRub')
   const sizes = [...new Set(readText(formData, 'sizes', 240).split(',').map((size) => size.trim()).filter(Boolean))].slice(0, 20)
+  const images = readImageUrls(formData)
   const description = readText(formData, 'description', 8000)
   let sourceUrl: string | null = null
 
@@ -337,6 +356,7 @@ export async function updateProduct(productId: string, formData: FormData) {
       purchasePriceRub: String(purchasePriceRub),
       salePriceRub: String(salePriceRub),
       sizes,
+      images,
       description,
       updatedAt: new Date(),
     }).where(and(eq(products.id, productId), eq(products.userId, userId)))
@@ -638,7 +658,7 @@ export async function exportOrdersXlsx() {
       { header: 'Оплата', width: 20 },
       { header: 'Выкуп', width: 24 },
       { header: 'Доставка', width: 24 },
-      { header: 'Продажа за единицу, RUB', width: 22 },
+      { header: 'Прод��жа за единицу, RUB', width: 22 },
       { header: 'Себестоимость за единицу, RUB', width: 28 },
       { header: 'Продажа всего, RUB', width: 20 },
       { header: 'Себестоимость всего, RUB', width: 24 },

@@ -13,6 +13,7 @@
     "@base-ui/react": "^1.5.0",
     "@shadcn/react": "^0.3.1",
     "@vercel/analytics": "1.6.1",
+    "@vercel/blob": "^2.8.2",
     "@vercel/connect": "2.7.0",
     "ai": "^7.0.159",
     "class-variance-authority": "^0.7.1",

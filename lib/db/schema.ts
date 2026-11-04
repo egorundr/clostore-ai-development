@@ -70,6 +70,7 @@ export const products = pgTable('products', {
   purchasePriceRub: numeric('purchasePriceRub', { precision: 12, scale: 2 }).notNull().default('0'),
   salePriceRub: numeric('salePriceRub', { precision: 12, scale: 2 }).notNull().default('0'),
   sizes: jsonb('sizes').$type<string[]>().notNull().default([]),
+  images: jsonb('images').$type<string[]>().notNull().default([]),
   description: text('description').notNull().default(''),
   status: text('status').notNull().default('draft'),
   listingStatus: text('listingStatus').notNull().default('unpublished'),
@@ -151,3 +152,31 @@ export const financialTransactions = pgTable('financial_transactions', {
   occurredAt: timestamp('occurredAt').notNull().defaultNow(),
   createdAt: timestamp('createdAt').notNull().defaultNow(),
 }, (table) => [index('financial_transactions_user_occurred_idx').on(table.userId, table.occurredAt)])
+
+export const publications = pgTable('publications', {
+  id: text('id').primaryKey(),
+  userId: text('userId').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  productId: text('productId').references(() => products.id, { onDelete: 'set null' }),
+  channel: text('channel').notNull().default('telegram'),
+  title: text('title').notNull().default(''),
+  body: text('body').notNull().default(''),
+  imageUrls: jsonb('imageUrls').$type<string[]>().notNull().default([]),
+  status: text('status').notNull().default('draft'),
+  externalMessageId: text('externalMessageId'),
+  publishedAt: timestamp('publishedAt'),
+  error: text('error').notNull().default(''),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+  updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+}, (table) => [index('publications_user_created_idx').on(table.userId, table.createdAt)])
+
+export const publicationTemplates = pgTable('publication_templates', {
+  id: text('id').primaryKey(),
+  userId: text('userId').notNull(),
+  name: text('name').notNull(),
+  title: text('title').notNull(),
+  body: text('body').notNull(),
+  imageUrls: jsonb('imageUrls').$type<string[]>().notNull().default([]),
+  imageTemplateUrl: text('imageTemplateUrl'),
+  createdAt: timestamp('createdAt').notNull().defaultNow(),
+  updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+}, (table) => [index('publication_templates_user_updated_idx').on(table.userId, table.updatedAt)])

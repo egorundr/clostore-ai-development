@@ -2,7 +2,7 @@ import 'server-only'
 
 import { and, count, desc, eq, gte, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { financialTransactions, orderStatusHistory, orders, productSearches, products, suppliers } from '@/lib/db/schema'
+import { financialTransactions, orderStatusHistory, orders, productSearches, products, publicationTemplates, publications, suppliers } from '@/lib/db/schema'
 import type { OrderStatus, WorkspaceData } from '@/components/clostore/types'
 
 const orderStatuses: OrderStatus[] = [
@@ -34,9 +34,10 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
   since.setUTCMonth(since.getUTCMonth() - 5, 1)
   since.setUTCHours(0, 0, 0, 0)
 
-  const [orderRows, productRows, supplierRows, searchRows, historyRows, transactionRows, orderTotals, transactionTotals, reviewTotals, publishedTotals, trendRows, expenseTrendRows] = await Promise.all([
+  const [orderRows, productRows, publicationRows, supplierRows, searchRows, historyRows, transactionRows, orderTotals, transactionTotals, reviewTotals, publishedTotals, trendRows, expenseTrendRows, templateRows] = await Promise.all([
     db.select().from(orders).where(eq(orders.userId, userId)).orderBy(desc(orders.createdAt)).limit(100),
     db.select().from(products).where(eq(products.userId, userId)).orderBy(desc(products.createdAt)).limit(200),
+    db.select().from(publications).where(eq(publications.userId, userId)).orderBy(desc(publications.createdAt)).limit(100),
     db.select().from(suppliers).where(eq(suppliers.userId, userId)).orderBy(suppliers.name).limit(200),
     db.select().from(productSearches).where(eq(productSearches.userId, userId)).orderBy(desc(productSearches.createdAt)).limit(20),
     db.select().from(orderStatusHistory).where(eq(orderStatusHistory.userId, userId)).orderBy(desc(orderStatusHistory.createdAt)).limit(1000),
@@ -45,8 +46,9 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
       total: count(),
       active: sql<number>`count(*) filter (where ${orders.status} not in ('Завершён', 'Отменён'))`,
       unitCount: sql<string>`coalesce(sum(${orders.quantity}), 0)::text`,
-      revenue: sql<string>`coalesce(sum(${orders.salePriceRub} * ${orders.quantity}), 0)::text`,
-      cost: sql<string>`coalesce(sum(${orders.costRub} * ${orders.quantity}), 0)::text`,
+      paidOrderCount: sql<string>`count(*) filter (where ${orders.paymentStatus} = 'Оплачен')::text`,
+      revenue: sql<string>`coalesce(sum(${orders.salePriceRub} * ${orders.quantity}) filter (where ${orders.paymentStatus} = 'Оплачен'), 0)::text`,
+      cost: sql<string>`coalesce(sum(${orders.costRub} * ${orders.quantity}) filter (where ${orders.paymentStatus} = 'Оплачен'), 0)::text`,
     }).from(orders).where(eq(orders.userId, userId)),
     db.select({ total: sql<string>`coalesce(sum(${financialTransactions.amountRub}), 0)::text` })
       .from(financialTransactions).where(eq(financialTransactions.userId, userId)),
@@ -54,12 +56,13 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
     db.select({ total: count() }).from(products).where(and(eq(products.userId, userId), eq(products.listingStatus, 'published'))),
     db.select({ createdAt: orders.createdAt, salePriceRub: orders.salePriceRub, costRub: orders.costRub, quantity: orders.quantity })
       .from(orders)
-      .where(and(eq(orders.userId, userId), gte(orders.createdAt, since)))
+      .where(and(eq(orders.userId, userId), eq(orders.paymentStatus, 'Оплачен'), gte(orders.createdAt, since)))
       .orderBy(orders.createdAt),
     db.select({ occurredAt: financialTransactions.occurredAt, amountRub: financialTransactions.amountRub })
       .from(financialTransactions)
       .where(and(eq(financialTransactions.userId, userId), gte(financialTransactions.occurredAt, since)))
       .orderBy(financialTransactions.occurredAt),
+    db.select().from(publicationTemplates).where(eq(publicationTemplates.userId, userId)).orderBy(desc(publicationTemplates.updatedAt)).limit(100),
   ])
 
   const supplierNames = new Map(supplierRows.map((supplier) => [supplier.id, supplier.name]))
@@ -88,6 +91,7 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
       purchaseRub: amount(product.purchasePriceRub),
       salePriceRub: amount(product.salePriceRub),
       sizes: Array.isArray(product.sizes) ? product.sizes : [],
+      images: Array.isArray(product.images) ? product.images : [],
       description: product.description,
       status: product.status === 'review' ? 'На рассмотрении' : product.status === 'active' ? 'В каталоге' : product.status === 'rejected' ? 'Отклонён' : 'Черновик',
       listingStatus: product.listingStatus === 'published' ? 'Опубликован' : product.listingStatus === 'draft' ? 'Черновик' : 'Не опубликован',
@@ -170,7 +174,30 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
       })),
     })),
     products: mappedProducts,
-    suppliers: supplierRows.map((supplier) => ({
+    publications: publicationRows.map((publication) => ({
+      id: publication.id,
+      productId: publication.productId,
+      channel: publication.channel,
+      title: publication.title,
+      body: publication.body,
+      imageUrls: Array.isArray(publication.imageUrls) ? publication.imageUrls : [],
+      status: publication.status,
+      externalMessageId: publication.externalMessageId,
+      publishedAt: publication.publishedAt?.toISOString() ?? null,
+      error: publication.error,
+      createdAt: publication.createdAt.toISOString(),
+    })),
+    publicationTemplates: templateRows.map((template) => ({
+      id: template.id,
+      name: template.name,
+      title: template.title,
+      body: template.body,
+      imageUrls: Array.isArray(template.imageUrls) ? template.imageUrls : [],
+      imageTemplateUrl: template.imageTemplateUrl ?? null,
+      createdAt: template.createdAt.toISOString(),
+      updatedAt: template.updatedAt.toISOString(),
+    })),
+    suppliers: supplierRows.map((supplier) => ({ 
       id: supplier.id,
       name: supplier.name,
       platform: supplier.platform || 'Не указана',
@@ -189,6 +216,7 @@ export async function getWorkspaceData(userId: string): Promise<WorkspaceData> {
     revenueTrend,
     summary: {
       orderCount: Number(totals?.total ?? 0),
+      paidOrderCount: Number(totals?.paidOrderCount ?? 0),
       activeOrderCount: Number(totals?.active ?? 0),
       unitCount: Number(totals?.unitCount ?? 0),
       revenue,

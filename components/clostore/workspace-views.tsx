@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo, useRef, useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -17,6 +18,7 @@ import {
   MoreHorizontal,
   Package,
   Plus,
+  RefreshCw,
   Search,
   Send,
   Settings2,
@@ -57,17 +59,20 @@ import { Bubble, BubbleContent } from '@/components/ui/bubble'
 import { Marker, MarkerContent, MarkerIcon } from '@/components/ui/marker'
 import { Message, MessageAvatar, MessageContent, MessageFooter, MessageHeader } from '@/components/ui/message'
 import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from '@/components/ui/message-scroller'
-import { Progress } from '@/components/ui/progress'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
-import { respondToAgentApprovals, runAgentTask } from '@/app/actions/agent'
-import { testTelegramConnection } from '@/app/actions/integrations'
+import { cancelAgentTask, getAgentTasks, respondToAgentApprovals, runAgentTask } from '@/app/actions/agent'
+import { publishTelegramPublication, saveTelegramPublication, testTelegramConnection } from '@/app/actions/integrations'
 import { saveProductSearch, updateProductPricing } from '@/app/actions/workspace'
+import { PinduoduoSearchPanel } from './pinduoduo-search-panel'
+import { PublicationTemplateTools } from './publication-template-tools'
+import { ProductPhotoPreparation } from './product-photo-preparation'
 import { calculatePricing, formatRub, type PricingInputs } from '@/lib/pricing'
 import { demoOrders, demoProducts } from './demo-data'
-import type { AgentTaskPreview, DemoProduct, IntegrationStatus, SavedProductSearch, SectionId, WorkspaceData } from './types'
+import { ImageUploadField } from './image-upload-field'
+import type { AgentTaskPreview, AgentUsageSummary, DemoProduct, IntegrationStatus, SavedProductSearch, SectionId, WorkspaceData, WorkspacePublication } from './types'
 import { LiveAnalyticsView, LiveCatalogView, LiveEditorView, LiveOrdersView, LiveReviewView, LiveSuppliersView } from './live-workspace-views'
 
 type WorkspaceViewsProps = {
@@ -75,6 +80,7 @@ type WorkspaceViewsProps = {
   onNavigate: (section: SectionId) => void
   data: WorkspaceData
   agentTasks: AgentTaskPreview[]
+  agentUsage: AgentUsageSummary
   integrations: IntegrationStatus[]
 }
 
@@ -113,10 +119,25 @@ function approvalDetails(approval: AgentTaskPreview['pendingApprovals'][number])
       ['Размеры', show(input.sizes)],
     ]
   }
+  if (approval.toolName === 'updateProductCard') {
+    return [
+      ['Товар', show(input.currentName)],
+      ['Название', input.name == null ? 'Без изменения' : show(input.name)],
+      ['Категория', input.category == null ? 'Без изменения' : show(input.category)],
+      ['Описание', input.description == null ? 'Без изменения' : show(input.description)],
+    ]
+  }
   if (approval.toolName === 'updateOrderStatus') {
     return [
       ['Заказ', `…${show(input.orderId).slice(-8)}`],
       ['Новый статус', show(input.status)],
+    ]
+  }
+  if (approval.toolName === 'requestPinduoduoBrowserSearch') {
+    return [
+      ['Запрос поиска', show(input.query)],
+      ['Что произойдёт', 'Откроется поиск Pinduoduo только после нажатия в расширении'],
+      ['Передача результатов', 'Только видимые карточки после отдельного подтверждения в расширении'],
     ]
   }
   return [
@@ -128,7 +149,9 @@ function approvalDetails(approval: AgentTaskPreview['pendingApprovals'][number])
 
 function approvalTitle(toolName: AgentTaskPreview['pendingApprovals'][number]['toolName']) {
   if (toolName === 'createProductDraft') return 'Создать черновик товара'
+  if (toolName === 'updateProductCard') return 'Подготовить карточку товара'
   if (toolName === 'updateOrderStatus') return 'Изменить статус заказа'
+  if (toolName === 'requestPinduoduoBrowserSearch') return 'Запустить поиск Pinduoduo'
   return 'Добавить расход'
 }
 
@@ -136,6 +159,9 @@ function agentTaskStatusLabel(status: string) {
   if (status === 'completed') return 'Готово'
   if (status === 'running') return 'В работе'
   if (status === 'awaiting_approval') return 'Нужно решение'
+  if (status === 'awaiting_browser') return 'Ждёт браузер'
+  if (status === 'browser_running') return 'Браузер открыт'
+  if (status === 'cancelled') return 'Отменена'
   return 'Ошибка'
 }
 
@@ -143,18 +169,20 @@ function agentTaskStatusClass(status: string) {
   if (status === 'completed') return 'border-emerald-300/20 bg-emerald-300/[0.07] text-emerald-100'
   if (status === 'running') return 'border-sky-300/20 bg-sky-300/[0.07] text-sky-100'
   if (status === 'awaiting_approval') return 'border-amber-300/20 bg-amber-300/[0.07] text-amber-100'
+  if (status === 'awaiting_browser' || status === 'browser_running') return 'border-violet-300/20 bg-violet-300/[0.07] text-violet-100'
   return 'border-white/10 bg-white/[0.03] text-muted-foreground'
 }
 
-function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
+function AgentView({ initialTasks, products, templates, onNavigate }: { initialTasks: AgentTaskPreview[]; products: WorkspaceData['products']; templates: WorkspaceData['publicationTemplates']; onNavigate: (section: SectionId) => void }) {
   const [task, setTask] = useState('')
   const [tasks, setTasks] = useState(initialTasks)
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(initialTasks[0]?.id ?? null)
   const [historyQuery, setHistoryQuery] = useState('')
   const [error, setError] = useState('')
   const [pending, startTransition] = useTransition()
+  const [refreshing, setRefreshing] = useState(false)
   const composerRef = useRef<HTMLTextAreaElement>(null)
-  const suggestions = ['Покажи активные товары в каталоге', 'Какие заказы сейчас в пути?', 'Создай черновик товара из моего описания']
+  const suggestions = ['Покажи активные товары в каталоге', 'Какие заказы сейчас в пути?', 'Найди похожие товары на Pinduoduo', 'Составь отчёт по товарам Pinduoduo и подготовь карточки', 'Создай черновик товара из моего описания']
   const activeTask = selectedTaskId ? tasks.find((item) => item.id === selectedTaskId) ?? tasks[0] : undefined
   const filteredTasks = useMemo(() => {
     const query = historyQuery.trim().toLocaleLowerCase('ru-RU')
@@ -211,6 +239,41 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
         setSelectedTaskId(result.task.id)
       } catch {
         setError('Не удалось обработать подтверждение. Проверьте историю задачи перед повтором.')
+      }
+    })
+  }
+
+  async function refreshAgentTasks() {
+    if (pending || refreshing) return
+    setError('')
+    setRefreshing(true)
+    try {
+      const latestTasks = await getAgentTasks()
+      setTasks(latestTasks)
+      if (selectedTaskId && !latestTasks.some((item) => item.id === selectedTaskId)) {
+        setSelectedTaskId(latestTasks[0]?.id ?? null)
+      }
+    } catch {
+      setError('Не удалось обновить историю задач.')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  function cancelPendingTask() {
+    const canCancelBrowserTask = activeTask?.status === 'awaiting_browser' || activeTask?.status === 'browser_running'
+    if ((!activeTask?.pendingApprovals.length && !canCancelBrowserTask) || pending || !activeTask) return
+    setError('')
+    startTransition(async () => {
+      try {
+        const result = await cancelAgentTask(activeTask.id)
+        if (!result.ok) {
+          setError('Эта задача уже обработана. Обновите историю задач.')
+          return
+        }
+        setTasks((current) => current.map((item) => item.id === result.task.id ? result.task : item))
+      } catch {
+        setError('Не удалось отменить задачу. Проверьте её статус и повторите попытку.')
       }
     })
   }
@@ -281,9 +344,26 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
                             <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">{approvalDetails(approval).map(([label, value]) => <div key={label} className="contents"><dt className="text-muted-foreground">{label}</dt><dd className="break-words text-right">{value}</dd></div>)}</dl>
                           </div>)}
                           <div className="flex flex-wrap gap-2">
-                            <Button type="button" disabled={pending} onClick={() => decideApprovals(true)}><Check data-icon="inline-start" />{pending ? 'Выполняю…' : 'Подтвердить изменения'}</Button>
+                            <Button type="button" disabled={pending} onClick={() => decideApprovals(true)}><Check data-icon="inline-start" />{pending ? 'Выполняю…' : activeTask.pendingApprovals.some((approval) => approval.toolName === 'requestPinduoduoBrowserSearch') ? 'Подтвердить поиск' : 'Подтвердить изменения'}</Button>
                             <Button type="button" variant="outline" disabled={pending} onClick={() => decideApprovals(false)}><X data-icon="inline-start" />Отклонить</Button>
+                            <Button type="button" variant="ghost" disabled={pending} onClick={cancelPendingTask}>Отменить задачу</Button>
                           </div>
+                        </CardContent>
+                      </Card>
+                    </MessageScrollerItem>}
+                    {activeTask.browserCommand && (activeTask.status === 'awaiting_browser' || activeTask.status === 'browser_running') && <MessageScrollerItem messageId={`${activeTask.id}-browser-command`}>
+                      <Card className="ml-10 max-w-2xl border-violet-300/20 bg-violet-300/[0.04] shadow-none">
+                        <CardHeader className="gap-1.5">
+                          <CardTitle className="flex items-center gap-2 text-sm"><Search className="text-violet-200" />Нужно действие в браузере</CardTitle>
+                          <p className="text-xs text-muted-foreground">Команда уже подтверждена. Расширение не открывает страницы и не сканирует их автоматически.</p>
+                        </CardHeader>
+                        <CardContent className="flex flex-col gap-3">
+                          <div className="rounded-lg border border-white/[0.08] bg-background/50 p-3">
+                            <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Поисковый запрос</p>
+                            <p className="mt-1 break-words text-sm">{activeTask.browserCommand.query}</p>
+                          </div>
+                          <p className="text-xs leading-5 text-muted-foreground">Откройте расширение Pinduoduo, нажмите «Проверить очередь агента», вручную откройте поиск, затем вернитесь на страницу результатов и нажмите «Передать видимые товары агенту».</p>
+                          <Button type="button" variant="outline" className="self-start" disabled={pending} onClick={cancelPendingTask}>Отменить задачу</Button>
                         </CardContent>
                       </Card>
                     </MessageScrollerItem>}
@@ -336,6 +416,7 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
         </Card>
 
         <aside className="flex flex-col gap-4 xl:sticky xl:top-24">
+          <ProductPhotoPreparation products={products} templates={templates} onNavigate={onNavigate} />
           <Card className="border-white/[0.07] bg-card/80 shadow-none">
             <CardHeader className="gap-3 pb-3">
               <div className="flex items-start justify-between gap-3">
@@ -343,7 +424,12 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
                   <History className="shrink-0 text-muted-foreground" />
                   <div className="min-w-0"><CardTitle>История задач</CardTitle><p className="mt-1 text-xs text-muted-foreground">Последние 20 запусков</p></div>
                 </div>
-                <Badge variant="secondary" className="tabular-nums">{tasks.length}</Badge>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button type="button" variant="ghost" size="icon-sm" disabled={pending || refreshing} onClick={refreshAgentTasks} aria-label="Обновить историю задач">
+                    <RefreshCw className={refreshing ? 'animate-spin' : ''} />
+                  </Button>
+                  <Badge variant="secondary" className="tabular-nums">{tasks.length}</Badge>
+                </div>
               </div>
               <div className="relative">
                 <Search aria-hidden="true" className="absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" />
@@ -360,7 +446,7 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
                     <time dateTime={new Date(item.createdAt).toISOString()} className="shrink-0 text-[10px] text-muted-foreground">{shortDate.format(new Date(item.createdAt))}</time>
                   </span>
                 </button>
-              }) : <p className="px-3 py-8 text-center text-xs leading-5 text-muted-foreground">{tasks.length ? 'Задач по этому запросу не найдено.' : 'История появится после первого запуска.'}</p>}
+              }) : <p className="px-3 py-8 text-center text-xs leading-5 text-muted-foreground">{tasks.length ? 'Задач по этому запросу не найдено.' : 'История появится посл�� первого запуска.'}</p>}
             </CardContent>
           </Card>
 
@@ -374,14 +460,14 @@ function AgentView({ initialTasks }: { initialTasks: AgentTaskPreview[] }) {
             <CardContent className="flex flex-col gap-4 text-xs leading-5 text-muted-foreground">
               <div>
                 <p className="font-medium text-foreground">Доступно агенту</p>
-                <div className="mt-2 flex flex-wrap gap-1.5"><Badge variant="secondary"><Package data-icon="inline-start" />Каталог</Badge><Badge variant="secondary"><Truck data-icon="inline-start" />Заказы</Badge><Badge variant="secondary"><Wallet data-icon="inline-start" />Финансы</Badge></div>
+                <div className="mt-2 flex flex-wrap gap-1.5"><Badge variant="secondary"><Package data-icon="inline-start" />Каталог</Badge><Badge variant="secondary"><Truck data-icon="inline-start" />Заказы</Badge><Badge variant="secondary"><Wallet data-icon="inline-start" />Финансы</Badge><Badge variant="secondary"><Search data-icon="inline-start" />Pinduoduo через браузер</Badge></div>
               </div>
               <Separator className="bg-white/[0.06]" />
               <div className="flex items-start gap-2.5">
                 <CheckCircle2 className="mt-0.5 shrink-0 text-emerald-200" />
-                <div><p className="font-medium text-foreground">Изменения под контролем</p><p className="mt-1">Создание карточек, обновление статусов и расходы — только после вашего подтверждения.</p></div>
+                <div><p className="font-medium text-foreground">Изменения под контролем</p><p className="mt-1">Создание и редактирование карточек, обновление статусов и расходы — только после вашего подтверждения.</p></div>
               </div>
-              <p>Контакты покупателей не передаются. Telegram, Avito, закупки и интернет-поиск пока не подключены.</p>
+              <p>Контакты покупателей не передаются. Поиск на Pinduoduo выполняется только через ваше расширение и только после подтверждения.</p>
             </CardContent>
           </Card>
         </aside>
@@ -431,7 +517,7 @@ function SearchView({ data, onNavigate }: { data: WorkspaceData; onNavigate: (se
         const result = await saveProductSearch(formData)
         setHistory((current) => [result.search, ...current.filter((search) => search.id !== result.search.id)].slice(0, 20))
         setActiveSearch(result.search)
-        setNotice('Запрос сохранён. Откройте выбранную площадку для ручного просмотра; автоматический сбор не выполняется.')
+        setNotice('Запрос сохранён. Откройте поиск Pinduoduo выше и считайте видимые карточки браузерным расширением.')
       } catch {
         setNotice('Не удалось сохранить запрос. Проверьте обязательные поля, диапазон цены и URL своего источника.')
       }
@@ -440,13 +526,14 @@ function SearchView({ data, onNavigate }: { data: WorkspaceData; onNavigate: (se
 
   return (
     <div className="space-y-5">
-      <SectionHeading title="Поиск товаров" description="Сохраните критерии и откройте поиск на выбранных площадках." action={<Button variant="outline" onClick={() => onNavigate('settings')}><Settings2 data-icon="inline-start" /> Источники</Button>} />
-      <div className="rounded-lg border border-sky-400/15 bg-sky-400/[0.04] p-3 text-xs leading-5 text-sky-100/75">Запросы сохраняются в вашем рабочем пространстве. Результаты открываются на официальных сайтах для ручного просмотра — автоматический сбор и импорт не выполняются.</div>
+      <SectionHeading title="Поиск товаров" description="Задайте запрос, откройте результаты Pinduoduo и добавьте видимые товары в очередь Clostore браузерным парсе��ом." action={<Button variant="outline" onClick={() => onNavigate('settings')}><Settings2 data-icon="inline-start" /> Источники</Button>} />
+      <div className="rounded-lg border border-sky-400/15 bg-sky-400/[0.04] p-3 text-xs leading-5 text-sky-100/75">Расширение использует вашу обычную открытую страницу Pinduoduo и читает только отображённые карточки. Пароль и cookies не передаются; при CAPTCHA или блокировке сканирование останавливается.</div>
+      <PinduoduoSearchPanel />
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Параметры поиска</CardTitle><p className="text-xs text-muted-foreground">Точные условия помогут сократить лишние результаты</p></CardHeader>
           <CardContent><form onSubmit={requestSearch} className="space-y-5">
             <FieldGroup className="grid gap-4 md:grid-cols-2">
-              <Field className="md:col-span-2"><FieldLabel htmlFor="search-query">Что ищем</FieldLabel><Input id="search-query" name="query" required maxLength={240} placeholder="Например, мужская куртка в стиле archive" /></Field>
+              <Field className="md:col-span-2"><FieldLabel htmlFor="search-query">Что ��щем</FieldLabel><Input id="search-query" name="query" required maxLength={240} placeholder="Например, мужская куртка в стиле archive" /></Field>
               <Field><FieldLabel htmlFor="search-category">Категория</FieldLabel><Input id="search-category" name="category" maxLength={120} placeholder="Верхняя одежда" /></Field>
               <Field><FieldLabel htmlFor="search-style">Стиль</FieldLabel><Input id="search-style" name="style" maxLength={120} placeholder="Avant-garde, archive…" /></Field>
               <Field><FieldLabel htmlFor="search-min">Цена от, CNY</FieldLabel><Input id="search-min" name="minPriceCny" type="number" min="0" step="0.01" placeholder="80" /></Field>
@@ -481,7 +568,7 @@ function SearchView({ data, onNavigate }: { data: WorkspaceData; onNavigate: (se
           <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>История запросов</CardTitle><p className="text-xs text-muted-foreground">Последние 20 запросов этого аккаунта</p></CardHeader><CardContent className="space-y-2">
             {history.length ? history.map((search) => <button key={search.id} type="button" onClick={() => setActiveSearch(search)} className="flex w-full items-start justify-between gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-white/[0.04]"><span className="min-w-0"><span className="block truncate text-sm">{search.query}</span><span className="mt-1 block text-xs text-muted-foreground">{new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(search.createdAt))}</span></span><Clock3 className="mt-0.5 size-4 shrink-0 text-muted-foreground" /></button>) : <p className="text-sm text-muted-foreground">Пока нет сохранённых запросов.</p>}
           </CardContent></Card>
-          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Безопасный сбор</CardTitle></CardHeader><CardContent className="text-xs leading-5 text-muted-foreground">Площадки открываются отдельно. Проверяйте правила площадки и используйте только разрешённые способы доступа; автоматизированный сбор в приложении отключён.</CardContent></Card>
+          <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Доступ к источникам</CardTitle></CardHeader><CardContent className="text-xs leading-5 text-muted-foreground">Поиск открывается в официальном Pinduoduo, а импорт использует только скопированные вами данные. Для Grailed и собственных источников сохраняйте запрос и открывайте сайт вручную.</CardContent></Card>
         </div>
       </div>
     </div>
@@ -501,7 +588,7 @@ function ReviewQueueView() {
 
   return <div className="space-y-5"><SectionHeading title="Очередь проверки" description="Проверьте найденные товары перед добавлением в каталог." action={<Badge variant="outline" className="w-fit border-white/10">{items.length} на рассмотрении</Badge>} /><DemoNotice />
     {message && <p role="status" className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-xs text-muted-foreground">{message}</p>}
-    {items.length === 0 ? <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardContent className="py-16 text-center"><CheckCircle2 className="mx-auto text-muted-foreground" /><p className="mt-3 font-medium">Очередь разобрана</p><p className="mt-1 text-sm text-muted-foreground">Решения по {resolved.length} демо-карточкам не сохраняются после обновления страницы.</p></CardContent></Card> : <div className="grid gap-4 lg:grid-cols-2">{items.map((product) => <ReviewProductCard key={product.id} product={product} onResolve={resolve} />)}</div>}
+    {items.length === 0 ? <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardContent className="py-16 text-center"><CheckCircle2 className="mx-auto text-muted-foreground" /><p className="mt-3 font-medium">Очере��ь разобрана</p><p className="mt-1 text-sm text-muted-foreground">Решения по {resolved.length} демо-карточкам не сохраняются после обновления страницы.</p></CardContent></Card> : <div className="grid gap-4 lg:grid-cols-2">{items.map((product) => <ReviewProductCard key={product.id} product={product} onResolve={resolve} />)}</div>}
   </div>
 }
 
@@ -535,7 +622,7 @@ function OrdersView() {
     {message && <p role="status" className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-xs text-muted-foreground">{message}</p>}
     <div className="grid gap-3 sm:grid-cols-3"><SmallStat icon={Clock3} label="Ожидают действия" value={String(demoOrders.filter((order) => order.status.includes('Ожидает')).length)} /><SmallStat icon={Package} label="В обработке" value={String(demoOrders.filter((order) => ['Заказан у поставщика', 'В пути'].includes(order.status)).length)} /><SmallStat icon={Truck} label="Демо-заказов" value={String(demoOrders.length)} /></div>
     <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="relative w-full sm:max-w-sm"><Search className="absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Покупатель, товар, номер заказа" className="pl-9" /></div><Button variant="outline" size="sm"><ArrowDownToLine data-icon="inline-start" /> Экспорт</Button></CardContent><div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Заказ</TableHead><TableHead>Покупатель / товар</TableHead><TableHead>Этап</TableHead><TableHead>Поставщик</TableHead><TableHead className="text-right">Сумма</TableHead></TableRow></TableHeader><TableBody>{filtered.map((order) => <TableRow key={order.id}><TableCell><span className="font-medium">{order.id}</span><span className="mt-1 block text-xs text-muted-foreground">{order.createdAt}</span></TableCell><TableCell><span className="block">{order.customer}</span><span className="mt-1 block text-xs text-muted-foreground">{order.product} · {order.size}</span></TableCell><TableCell><Badge variant="outline" className={statusTone(order.status)}>{order.status}</Badge>{order.tracking && <span className="mt-1 block text-[10px] text-muted-foreground">Трек: {order.tracking}</span>}</TableCell><TableCell className="text-muted-foreground">{order.supplier}</TableCell><TableCell className="text-right"><span className="font-medium tabular-nums">{formatRub(order.salePrice)}</span><span className="mt-1 block text-xs text-muted-foreground">прибыль {formatRub(order.salePrice - order.cost)}</span></TableCell></TableRow>)}</TableBody></Table></div></Card>
-    <Dialog open={dialogOpen} onOpenChange={setDialogOpen}><DialogContent className="max-w-lg border-white/10 bg-[#1b1d20]"><DialogHeader><DialogTitle>Новый заказ</DialogTitle><DialogDescription>Заполните основные поля. До подключения базы заказ останется только в форме.</DialogDescription></DialogHeader><form onSubmit={saveDraft} className="space-y-4"><FieldGroup className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="order-customer">Покупатель</FieldLabel><Input id="order-customer" required placeholder="Имя клиента" /></Field><Field><FieldLabel htmlFor="order-contact">Контакт</FieldLabel><Input id="order-contact" required placeholder="Телефон или Telegram" /></Field><Field className="sm:col-span-2"><FieldLabel htmlFor="order-product">Товар</FieldLabel><Input id="order-product" required placeholder="Название товара" /></Field><Field><FieldLabel htmlFor="order-size">Размер</FieldLabel><Input id="order-size" placeholder="M" /></Field><Field><FieldLabel htmlFor="order-sale">Цена продажи, ₽</FieldLabel><Input id="order-sale" required type="number" min="1" placeholder="12900" /></Field></FieldGroup><DialogFooter><Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Отмена</Button><Button type="submit">Проверить форму</Button></DialogFooter></form></DialogContent></Dialog>
+    <Dialog open={dialogOpen} onOpenChange={setDialogOpen}><DialogContent className="max-w-lg border-white/10 bg-[#1b1d20]"><DialogHeader><DialogTitle>Новый заказ</DialogTitle><DialogDescription>Заполните основные поля. До подключения базы заказ останется только в форме.</DialogDescription></DialogHeader><form onSubmit={saveDraft} className="space-y-4"><FieldGroup className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="order-customer">Покупатель</FieldLabel><Input id="order-customer" required placeholder="Имя клиента" /></Field><Field><FieldLabel htmlFor="order-contact">Контакт</FieldLabel><Input id="order-contact" required placeholder="Телефон ил�� Telegram" /></Field><Field className="sm:col-span-2"><FieldLabel htmlFor="order-product">Товар</FieldLabel><Input id="order-product" required placeholder="Название товара" /></Field><Field><FieldLabel htmlFor="order-size">Размер</FieldLabel><Input id="order-size" placeholder="M" /></Field><Field><FieldLabel htmlFor="order-sale">Цена продажи, ₽</FieldLabel><Input id="order-sale" required type="number" min="1" placeholder="12900" /></Field></FieldGroup><DialogFooter><Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Отмена</Button><Button type="submit">Проверить форму</Button></DialogFooter></form></DialogContent></Dialog>
   </div>
 }
 
@@ -588,7 +675,7 @@ function PricingView({ data }: { data: WorkspaceData }) {
   const fields: { key: keyof PricingInputs; label: string; step?: string }[] = [
     { key: 'purchasePriceCny', label: 'Закупочная цена, CNY', step: '0.01' },
     { key: 'cnyToRub', label: 'Курс CNY / RUB', step: '0.01' },
-    { key: 'brokerFeePercent', label: 'Коми��сия посредника, %', step: '0.1' },
+    { key: 'brokerFeePercent', label: 'Комиссия посредника, %', step: '0.1' },
     { key: 'chinaShippingRub', label: 'Доставка по Китаю, ₽', step: '0.01' },
     { key: 'internationalShippingRub', label: 'Международная доставка, ₽', step: '0.01' },
     { key: 'extraCostsRub', label: 'Дополнительные расходы, ₽', step: '0.01' },
@@ -596,16 +683,160 @@ function PricingView({ data }: { data: WorkspaceData }) {
     { key: 'salePriceRub', label: 'Цена продажи, ₽', step: '0.01' },
   ]
 
-  return <div className="flex flex-col gap-5"><SectionHeading title="Ценообразование" description="Рассчитайте и сохраните себестоимость и цену реального товара." /><p className="text-sm text-muted-foreground">Курс CNY вводится вручную и не обновляется автоматически. Доставка и комиссии в расчёте не сохраняются отдельно.</p><div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]"><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Параметры расчёта</CardTitle><p className="text-xs text-muted-foreground">Выберите товар или внесите значения вручную.</p></CardHeader><CardContent><FieldGroup className="grid gap-4 sm:grid-cols-2"><Field className="sm:col-span-2"><FieldLabel htmlFor="pricing-product">Карточка товара</FieldLabel><select id="pricing-product" value={selectedId} onChange={(event) => selectProduct(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3 text-sm"><option value="">Расчёт без сохранения в товар</option>{data.products.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>{fields.map(({ key, label, step }) => <Field key={key}><FieldLabel htmlFor={`pricing-${key}`}>{label}</FieldLabel><Input id={`pricing-${key}`} type="number" min="0" step={step ?? '0.01'} value={values[key]} onChange={(event) => update(key, event.target.value)} /></Field>)}</FieldGroup></CardContent></Card><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Итог</CardTitle></CardHeader><CardContent className="flex flex-col gap-3"><ResultRow label="Закупка в рублях" value={formatRub(result.purchaseRub)} /><ResultRow label="Комиссия посредника" value={formatRub(result.brokerFeeRub)} /><Separator className="bg-white/10" /><ResultRow label="Себестоимость" value={formatRub(result.landedCostRub)} strong /><ResultRow label="Цена продажи" value={formatRub(values.salePriceRub)} /><div className="rounded-lg border border-white/[0.07] bg-white/[0.025] p-3"><div className="flex items-center justify-between"><span className="text-sm text-muted-foreground">Прибыль</span><span className={`font-semibold tabular-nums ${result.profitRub >= 0 ? 'text-emerald-200' : 'text-rose-200'}`}>{formatRub(result.profitRub)}</span></div><div className="mt-2 flex items-center justify-between text-xs text-muted-foreground"><span>Маржа {result.marginPercent.toFixed(1)}%</span><span>Наценка {result.markupPercent.toFixed(1)}%</span></div></div>{notice && <p role="status" className="text-sm text-emerald-200">{notice}</p>}{error && <p role="alert" className="text-sm text-destructive">{error}</p>}<Button type="button" disabled={!product || values.cnyToRub <= 0 || pending} onClick={savePricing}>{pending ? 'Сохраняю…' : 'Сохранить в товар'}</Button><p className="text-xs leading-5 text-muted-foreground">Для ру��ного расчёта укажите фактический курс. Сохранение обновляет закупку в CNY, себестоимость в RUB и цену продажи.</p></CardContent></Card></div></div>
+  return <div className="flex flex-col gap-5"><SectionHeading title="Ценообразование" description="Рассчитайте и сохраните себестоимость и цену реального товара." /><p className="text-sm text-muted-foreground">Курс CNY вводится вручную и не обновляется автоматически. Доставка и комиссии в расчёте не сохраняются отдельно.</p><div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]"><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Параметры расчёта</CardTitle><p className="text-xs text-muted-foreground">Выберите товар или внесите значения вручную.</p></CardHeader><CardContent><FieldGroup className="grid gap-4 sm:grid-cols-2"><Field className="sm:col-span-2"><FieldLabel htmlFor="pricing-product">Карточка товара</FieldLabel><select id="pricing-product" value={selectedId} onChange={(event) => selectProduct(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3 text-sm"><option value="">Расчёт без сохранения в товар</option>{data.products.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>{fields.map(({ key, label, step }) => <Field key={key}><FieldLabel htmlFor={`pricing-${key}`}>{label}</FieldLabel><Input id={`pricing-${key}`} type="number" min="0" step={step ?? '0.01'} value={values[key]} onChange={(event) => update(key, event.target.value)} /></Field>)}</FieldGroup></CardContent></Card><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Итог</CardTitle></CardHeader><CardContent className="flex flex-col gap-3"><ResultRow label="Закупка в рублях" value={formatRub(result.purchaseRub)} /><ResultRow label="Комиссия посредника" value={formatRub(result.brokerFeeRub)} /><Separator className="bg-white/10" /><ResultRow label="Себестоимость" value={formatRub(result.landedCostRub)} strong /><ResultRow label="Цена продажи" value={formatRub(values.salePriceRub)} /><div className="rounded-lg border border-white/[0.07] bg-white/[0.025] p-3"><div className="flex items-center justify-between"><span className="text-sm text-muted-foreground">Прибыль</span><span className={`font-semibold tabular-nums ${result.profitRub >= 0 ? 'text-emerald-200' : 'text-rose-200'}`}>{formatRub(result.profitRub)}</span></div><div className="mt-2 flex items-center justify-between text-xs text-muted-foreground"><span>Маржа {result.marginPercent.toFixed(1)}%</span><span>Наценка {result.markupPercent.toFixed(1)}%</span></div></div>{notice && <p role="status" className="text-sm text-emerald-200">{notice}</p>}{error && <p role="alert" className="text-sm text-destructive">{error}</p>}<Button type="button" disabled={!product || values.cnyToRub <= 0 || pending} onClick={savePricing}>{pending ? 'Сохраняю…' : 'Сохранить в товар'}</Button><p className="text-xs leading-5 text-muted-foreground">Для ручного расчёта укажите фактический курс. Сохранение об��овляет закупку в CNY, себестоимость в RUB и цену продажи.</p></CardContent></Card></div></div>
 }
 
 function ResultRow({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) { return <div className="flex items-center justify-between gap-3 text-sm"><span className={strong ? 'font-medium' : 'text-muted-foreground'}>{label}</span><span className={`tabular-nums ${strong ? 'font-semibold' : ''}`}>{value}</span></div> }
 
-function PublicationView({ channel }: { channel: 'Telegram' }) {
-  const [text, setText] = useState('')
+function publicationStatusLabel(status: string) {
+  if (status === 'published') return 'Опубликована'
+  if (status === 'publishing') return 'Отправляется'
+  if (status === 'failed') return 'Ошибка отправки'
+  return 'Черновик'
+}
+
+function PublicationView({ data }: { data: WorkspaceData }) {
+  const router = useRouter()
+  const [draftId, setDraftId] = useState('')
+  const [productId, setProductId] = useState('')
+  const [title, setTitle] = useState('')
+  const [body, setBody] = useState('')
+  const [images, setImages] = useState('')
+  const [pending, startTransition] = useTransition()
   const [notice, setNotice] = useState('')
-  function saveDraft(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); setNotice('Черновик подготовлен тол��к�� в текущем окне. Публикация не отправлялась.') }
-  return <div className="space-y-5"><SectionHeading title="Telegram" description="Подготовка карточек и публикаций для Telegram." action={<Badge variant="outline" className="w-fit border-white/10 text-muted-foreground"><span className="mr-2 size-1.5 rounded-full bg-white/20" />Подключение через Vercel Connect</Badge>} /><DemoNotice>Черновик не отправляется автоматически. Для публикации нужно задать получателя и отдельно подтвердить отправку.</DemoNotice><div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]"><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Редактор публикации</CardTitle><p className="text-xs text-muted-foreground">Сначала сохраните черновик и проверьте текст</p></CardHeader><CardContent><form onSubmit={saveDraft} className="space-y-4"><FieldGroup><Field><FieldLabel htmlFor="listing-title">Заголовок</FieldLabel><Input id="listing-title" placeholder="Назв��ние модели" /></Field><Field><FieldLabel htmlFor="listing-text">Описание</FieldLabel><Textarea id="listing-text" value={text} onChange={(event) => setText(event.target.value)} className="min-h-40 resize-y" placeholder="Описание товара, материалы, размеры и условия заказа" /></Field></FieldGroup><div className="flex flex-wrap items-center justify-between gap-3"><Button type="button" variant="outline"><ImagePlus data-icon="inline-start" /> Выбрать фото</Button><Button type="submit" variant="secondary">Сохранить черновик</Button></div></form>{notice && <p role="status" className="mt-4 text-xs text-muted-foreground">{notice}</p>}</CardContent></Card><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Проверка перед публикацией</CardTitle></CardHeader><CardContent className="space-y-3 text-sm">{['Текст карточки проверен', 'Фото выбраны', 'Цена подтверждена', 'Публикация подтверждена'].map((item) => <div key={item} className="flex items-center gap-3 text-muted-foreground"><span className="size-4 rounded-full border border-white/15" />{item}</div>)}<Separator className="bg-white/10" /><p className="text-xs leading-5 text-muted-foreground">Черновик хранится только в текущем окне; отправка через {channel} пока не запускается.</p></CardContent></Card></div></div>
+  const [error, setError] = useState('')
+  const imageUrls = images.split(/\r?\n/).map((url) => url.trim()).filter(Boolean)
+  const selectedProduct = data.products.find((product) => product.id === productId)
+  const publicationText = [title.trim(), body.trim(), 'Контакт: @clostorelink'].filter(Boolean).join('\n\n')
+
+  function selectProduct(id: string) {
+    setProductId(id)
+    const product = data.products.find((item) => item.id === id)
+    if (!product) {
+      setDraftId('')
+      setTitle('')
+      setBody('')
+      setImages('')
+      setNotice('')
+      setError('')
+      return
+    }
+    setDraftId('')
+    setTitle(product.name)
+    setBody([product.description, product.sizes.length ? `Размеры: ${product.sizes.join(', ')}` : '', product.salePriceRub > 0 ? `Цена: ${formatRub(product.salePriceRub)}` : ''].filter(Boolean).join('\n'))
+    setImages(product.images.join('\n'))
+    setError('')
+  }
+
+  function editDraft(publication: WorkspacePublication) {
+    if (publication.status !== 'draft' && publication.status !== 'failed') return
+    setDraftId(publication.id)
+    setProductId(publication.productId ?? '')
+    setTitle(publication.title)
+    setBody(publication.body)
+    setImages(publication.imageUrls.join('\n'))
+    setNotice('Черновик загружен в редактор.')
+    setError('')
+  }
+
+  function saveDraft(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setNotice('')
+    setError('')
+    startTransition(async () => {
+      try {
+        const result = await saveTelegramPublication({
+          id: draftId || undefined,
+          productId: productId || null,
+          title,
+          body,
+          imageUrls,
+        })
+        if (!result.ok) {
+          setError(result.message)
+          return
+        }
+        setDraftId(result.id)
+        setNotice('Черновик сохранён в Neon.')
+        router.refresh()
+      } catch {
+        setError('Не удалось сохранить черновик. Проверьте заголовок, длину текста и ссылки на фото.')
+      }
+    })
+  }
+
+  function publishDraft() {
+    if (!draftId) {
+      setError('Сначала сохраните черновик.')
+      return
+    }
+    if (!window.confirm('Отправить эту публикацию в канал @clostorelink?')) return
+    setNotice('')
+    setError('')
+    startTransition(async () => {
+      try {
+        const result = await publishTelegramPublication(draftId)
+        if (!result.ok) {
+          setError(result.message)
+          router.refresh()
+          return
+        }
+        setNotice(result.message)
+        router.refresh()
+      } catch {
+        setError('Не удалось завершить отправку. Проверьте историю публикаций перед повторной попыткой.')
+        router.refresh()
+      }
+    })
+  }
+
+  return <div className="flex flex-col gap-5">
+    <SectionHeading title="Telegram" description="Сохраняйте черновики, проверяйте фото и отправляйте публикации в канал." action={<Badge variant="outline" className="w-fit border-emerald-300/20 text-emerald-100"><span className="mr-2 size-1.5 rounded-full bg-emerald-300" />@clostorelink</Badge>} />
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <Card className="border-white/[0.07] bg-card/80 shadow-none">
+        <CardHeader><CardTitle>Редактор публикации</CardTitle><p className="text-xs text-muted-foreground">Черновик сохраняется в Neon; отправка выполняется только после отдельного подтверждения.</p></CardHeader>
+        <CardContent>
+          <PublicationTemplateTools
+            initialTemplates={data.publicationTemplates}
+            products={data.products}
+            title={title}
+            body={body}
+            imageUrls={imageUrls}
+            onDraftCreated={(publication) => {
+              setDraftId(publication.id)
+              setProductId(publication.productId)
+              setTitle(publication.title)
+              setBody(publication.body)
+              setImages(publication.imageUrls.join('\n'))
+              setNotice('Черновик создан из шаблона и сохранён в Neon.')
+              setError('')
+              router.refresh()
+            }}
+          />
+          <form onSubmit={saveDraft} className="space-y-4">
+            <FieldGroup>
+              <Field><FieldLabel htmlFor="publication-product">Заполнить из каталога</FieldLabel><select id="publication-product" value={productId} onChange={(event) => selectProduct(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3 text-sm"><option value="">Новая публикация</option>{data.products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></Field>
+              <Field><FieldLabel htmlFor="listing-title">Заголовок</FieldLabel><Input id="listing-title" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={120} required placeholder="Название модели" /></Field>
+              <Field><FieldLabel htmlFor="listing-text">Описание</FieldLabel><Textarea id="listing-text" value={body} onChange={(event) => setBody(event.target.value)} maxLength={3800} className="min-h-36 resize-y" placeholder="Описание товара, материалы, размеры и условия заказа" /><p className="text-xs text-muted-foreground">До 1000 символов с фото или до 4000 без фото.</p></Field>
+              <ImageUploadField id="listing-images" label="Фото для Telegram" value={imageUrls} onChange={(urls) => setImages(urls.join('\n'))} />
+            </FieldGroup>
+            <div className="flex flex-wrap gap-2"><Button type="submit" variant="secondary" disabled={pending}>{pending ? 'Сохраняю…' : draftId ? 'Сохранить черновик' : 'Сохранить черновик'}</Button><Button type="button" onClick={publishDraft} disabled={pending || !draftId}>{pending ? 'Отправляю…' : 'Опубликовать'}</Button></div>
+          </form>
+          {notice && <p role="status" className="mt-4 text-sm text-emerald-200">{notice}</p>}
+          {error && <p role="alert" className="mt-4 text-sm text-destructive">{error}</p>}
+          <section aria-labelledby="telegram-preview-title" className="mt-5 rounded-lg border border-white/[0.07] bg-white/[0.025] p-4">
+            <h3 id="telegram-preview-title" className="text-sm font-medium">Предпросмотр сообщения</h3>
+            <p className="mt-3 whitespace-pre-wrap text-sm leading-6">{publicationText || 'Текст публикации появится здесь.'}</p>
+            {selectedProduct && <p className="mt-2 text-xs text-muted-foreground">Цена продажи из каталога: {selectedProduct.salePriceRub ? formatRub(selectedProduct.salePriceRub) : 'не указана'}</p>}
+          </section>
+        </CardContent>
+      </Card>
+      <Card className="border-white/[0.07] bg-card/80 shadow-none">
+        <CardHeader><CardTitle>История публикаций</CardTitle><p className="text-xs text-muted-foreground">Статусы и ошибки сохраняются в Neon.</p></CardHeader>
+        <CardContent>{data.publications.length ? <ol className="flex flex-col divide-y divide-white/[0.06]">{data.publications.map((publication) => <li key={publication.id} className="py-3 first:pt-0 last:pb-0"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-sm font-medium">{publication.title || 'Без заголовка'}</p><p className="mt-1 text-xs text-muted-foreground">{publicationStatusLabel(publication.status)} · {new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(publication.publishedAt ?? publication.createdAt))}</p></div>{(publication.status === 'draft' || publication.status === 'failed') && <Button type="button" size="sm" variant="ghost" onClick={() => editDraft(publication)}>Изменить</Button>}</div>{publication.error && <p className="mt-2 text-xs text-destructive">{publication.error}</p>}</li>)}</ol> : <p className="text-sm text-muted-foreground">Сохранённых публикаций пока нет.</p>}</CardContent>
+      </Card>
+    </div>
+  </div>
 }
 
 function EditorView() {
@@ -615,17 +846,15 @@ function EditorView() {
 function AnalyticsView() {
   const revenue = demoOrders.reduce((total, order) => total + order.salePrice, 0)
   const profit = demoOrders.reduce((total, order) => total + order.salePrice - order.cost, 0)
-  return <div className="space-y-5"><SectionHeading title="Аналитика" description="Показатели рассчитываются на основе заказов и продаж." action={<Button variant="outline">Период: демо</Button>} /><DemoNotice /><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><SmallStat icon={Wallet} label="Выручка" value={formatRub(revenue)} /><SmallStat icon={ArrowRight} label="Валовая прибыль" value={formatRub(profit)} /><SmallStat icon={Package} label="Количество заказов" value={String(demoOrders.length)} /><SmallStat icon={Clock3} label="Средний чек" value={formatRub(revenue / Math.max(demoOrders.length, 1))} /></div><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Нет подключённ��й истор��и продаж</CardTitle><p className="text-xs text-muted-foreground">Графики по месяцам появятся после сохранения реальных заказов.</p></CardHeader><CardContent><div className="flex min-h-52 flex-col items-center justify-center rounded-lg border border-dashed border-white/10 text-center"><FileSpreadsheet className="text-muted-foreground" /><p className="mt-3 text-sm font-medium">Реальные отчёты пока недоступны</p><p className="mt-1 max-w-md text-xs leading-5 text-muted-foreground">Сводные карточки выше вычислены только по четырём демонстрационным заказам. Конверсия и просмотры не подставляются без данных.</p></div></CardContent></Card></div>
+  return <div className="space-y-5"><SectionHeading title="Аналитика" description="Показатели рассчитываются на основе заказов и продаж." action={<Button variant="outline">Период: демо</Button>} /><DemoNotice /><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><SmallStat icon={Wallet} label="Выручка" value={formatRub(revenue)} /><SmallStat icon={ArrowRight} label="Валовая прибыль" value={formatRub(profit)} /><SmallStat icon={Package} label="Количество заказов" value={String(demoOrders.length)} /><SmallStat icon={Clock3} label="Средний чек" value={formatRub(revenue / Math.max(demoOrders.length, 1))} /></div><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Нет подключённой истории продаж</CardTitle><p className="text-xs text-muted-foreground">Графики по месяцам появятся после сохранения реальных заказов.</p></CardHeader><CardContent><div className="flex min-h-52 flex-col items-center justify-center rounded-lg border border-dashed border-white/10 text-center"><FileSpreadsheet className="text-muted-foreground" /><p className="mt-3 text-sm font-medium">Реальные отчёты пока недоступны</p><p className="mt-1 max-w-md text-xs leading-5 text-muted-foreground">Сводные карточки выше вычислены только по четырём демонстрационным заказам. Конверсия и просмотры не подставляются без данных.</p></div></CardContent></Card></div>
 }
 
-function AiUsageView({ tasks }: { tasks: AgentTaskPreview[] }) {
-  const completed = tasks.filter((task) => task.status === 'completed')
-  const inputTokens = completed.reduce((total, task) => total + (task.inputTokens ?? 0), 0)
-  const outputTokens = completed.reduce((total, task) => total + (task.outputTokens ?? 0), 0)
-  return <div className="space-y-5"><SectionHeading title="Ра��ходы н�� AI" description="Фактическое потребление токенов в последних сохранённых задачах." /><div className="grid gap-3 sm:grid-cols-3"><SmallStat icon={MessageSquareText} label="Выполнено задач" value={String(completed.length)} /><SmallStat icon={ArrowRight} label="Входящие токены" value={inputTokens.toLocaleString('ru-RU')} /><SmallStat icon={Sparkles} label="Исходящие токены" value={outputTokens.toLocaleString('ru-RU')} /></div><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>DeepSeek API</CardTitle><p className="text-xs text-muted-foreground">Показаны последние {tasks.length} задач из сохранённой истории.</p></CardHeader><CardContent className="space-y-4"><div className="rounded-lg border border-white/[0.07] p-4"><div className="flex justify-between text-xs"><span className="text-muted-foreground">Токены в истории</span><span>{(inputTokens + outputTokens).toLocaleString('ru-RU')}</span></div><Progress value={0} className="mt-3 h-1.5" /><p className="mt-3 text-xs leading-5 text-muted-foreground">Стоимость не рассчитывается по приблизительным тарифам. Сверяйте её в личном кабинете DeepSeek; приложение сохраняет фактическое число токенов каждого завершённого запроса.</p></div>{completed.length === 0 && <p className="text-sm text-muted-foreground">После первого запроса появятся фактические счётчики токенов.</p>}</CardContent></Card></div>
+function AiUsageView({ tasks, usage }: { tasks: AgentTaskPreview[]; usage: AgentUsageSummary }) {
+  const totalTokens = usage.inputTokens + usage.outputTokens
+  return <div className="flex flex-col gap-5"><SectionHeading title="Расходы на AI" description="Фактические счётчики DeepSeek по всем сохранённым задачам." /><div className="grid gap-3 sm:grid-cols-3"><SmallStat icon={MessageSquareText} label="Задач всего" value={String(usage.taskCount)} /><SmallStat icon={ArrowRight} label="Входящие токены" value={usage.inputTokens.toLocaleString('ru-RU')} /><SmallStat icon={Sparkles} label="Исходящие токены" value={usage.outputTokens.toLocaleString('ru-RU')} /></div><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>DeepSeek API</CardTitle><p className="text-xs text-muted-foreground">Общие счётчики агрегированы из Neon; ниже показаны последние {tasks.length} задач.</p></CardHeader><CardContent className="flex flex-col gap-4"><div className="rounded-lg border border-white/[0.07] p-4"><div className="flex justify-between text-xs"><span className="text-muted-foreground">Токены за весь период</span><span className="tabular-nums">{totalTokens.toLocaleString('ru-RU')}</span></div><p className="mt-3 text-xs leading-5 text-muted-foreground">Стоимость и бюджет не показываются: приложение не получает подтверждённый тариф и billing-данные DeepSeek, поэтому не подставляет оценочные суммы.</p></div>{tasks.length ? <div className="flex flex-col divide-y divide-white/[0.06]">{tasks.map((task) => <div key={task.id} className="flex flex-col gap-1 py-3 first:pt-0 sm:flex-row sm:items-center sm:gap-3"><span className="min-w-0 flex-1 truncate text-sm">{task.prompt}</span><span className="text-xs text-muted-foreground">{agentTaskStatusLabel(task.status)}</span><span className="whitespace-nowrap font-mono text-[10px] text-muted-foreground">{task.inputTokens ?? '—'} / {task.outputTokens ?? '—'} токенов</span></div>)}</div> : <p className="text-sm text-muted-foreground">После первого запроса появятся реальные счётчики токенов.</p>}</CardContent></Card></div>
 }
 
-function SettingsView({ integrations }: { integrations: IntegrationStatus[] }) {
+function SettingsView({ integrations, onNavigate }: { integrations: IntegrationStatus[]; onNavigate: (section: SectionId) => void }) {
   const [testResults, setTestResults] = useState<Record<string, string>>({})
   const [pending, startTransition] = useTransition()
 
@@ -637,7 +866,7 @@ function SettingsView({ integrations }: { integrations: IntegrationStatus[] }) {
     })
   }
 
-  return <div className="space-y-5"><SectionHeading title="Настройки" description="Провайдеры, каналы продаж и правила работы приложения." /><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Подключения</CardTitle><p className="text-xs text-muted-foreground">Секреты не отображаются в интерфейсе. Добавляйте переменные в Vars проекта; статусы показывают только наличие конфигурации, не успешность API-проверки.</p></CardHeader><CardContent className="divide-y divide-white/[0.06]">{integrations.map((item) => <div key={item.name} className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center"><span className={`size-2 shrink-0 rounded-full ${item.configured ? 'bg-emerald-300' : 'bg-white/20'}`} /><div className="min-w-0 flex-1"><p className="text-sm font-medium">{item.name}</p><p className="mt-1 text-xs text-muted-foreground">{item.detail}</p>{item.requiredVariables.length > 0 && <p className="mt-1 break-words font-mono text-[10px] text-muted-foreground/80">Переменные: {item.requiredVariables.join(', ')}</p>}</div><div className="flex flex-wrap items-center gap-2"><Badge variant="outline" className={item.configured ? 'w-fit border-emerald-300/20 text-emerald-100' : 'w-fit border-white/10 text-muted-foreground'}>{item.state}</Badge>{item.testProvider && <Button type="button" size="sm" variant="outline" disabled={!item.configured || pending} onClick={() => testConnection(item.testProvider!)}>{pending ? <LoaderCircle data-icon="inline-start" className="animate-spin" /> : null}Проверить</Button>}</div>{item.testProvider && testResults[item.testProvider] && <p role="status" className="mt-2 text-xs text-muted-foreground">{testResults[item.testProvider]}</p>}</div>)}</CardContent></Card><div className="grid gap-4 xl:grid-cols-2"><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Ценообразование</CardTitle></CardHeader><CardContent className="space-y-3"><ResultRow label="Основная валюта" value="RUB" /><ResultRow label="Дополнительная валюта" value="CNY" /><ResultRow label="Часовой пояс" value="Europe/Moscow" /><Button variant="outline" size="sm">Изменить параметры</Button></CardContent></Card><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Безопасность</CardTitle></CardHeader><CardContent className="space-y-3 text-xs leading-5 text-muted-foreground"><p>Вход и регистрация в приложении отключены. Данные доступны на странице без проверки пользователя.</p><p>Перед публикацией ограничьте д��ступ к деплою средствами Vercel: публичный адрес сам по себе не защищает данные.</p></CardContent></Card></div></div>
+  return <div className="space-y-5"><SectionHeading title="Настройки" description="Провайдеры, каналы продаж и правила работы приложения." /><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Подключения</CardTitle><p className="text-xs text-muted-foreground">Секреты не отображаются в интерфейсе. Добавляйте переменные в Vars проекта; статусы показывают только наличие конфигурации, не успешность API-проверки.</p></CardHeader><CardContent className="divide-y divide-white/[0.06]">{integrations.map((item) => <div key={item.name} className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center"><span className={`size-2 shrink-0 rounded-full ${item.configured ? 'bg-emerald-300' : 'bg-white/20'}`} /><div className="min-w-0 flex-1"><p className="text-sm font-medium">{item.name}</p><p className="mt-1 text-xs text-muted-foreground">{item.detail}</p>{item.requiredVariables.length > 0 && <p className="mt-1 break-words font-mono text-[10px] text-muted-foreground/80">Переменные: {item.requiredVariables.join(', ')}</p>}</div><div className="flex flex-wrap items-center gap-2"><Badge variant="outline" className={item.configured ? 'w-fit border-emerald-300/20 text-emerald-100' : 'w-fit border-white/10 text-muted-foreground'}>{item.state}</Badge>{item.testProvider && <Button type="button" size="sm" variant="outline" disabled={!item.configured || pending} onClick={() => testConnection(item.testProvider!)}>{pending ? <LoaderCircle data-icon="inline-start" className="animate-spin" /> : null}Проверить</Button>}</div>{item.testProvider && testResults[item.testProvider] && <p role="status" className="mt-2 text-xs text-muted-foreground">{testResults[item.testProvider]}</p>}</div>)}</CardContent></Card><div className="grid gap-4 xl:grid-cols-2"><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Ценообразование</CardTitle></CardHeader><CardContent className="space-y-3"><ResultRow label="Основная валюта" value="RUB" /><ResultRow label="Дополнительная валюта" value="CNY" /><ResultRow label="Часовой пояс" value="Europe/Moscow" /><Button variant="outline" size="sm" onClick={() => onNavigate('pricing')}>Открыть ценообразование</Button></CardContent></Card><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Безопасность</CardTitle></CardHeader><CardContent className="space-y-3 text-xs leading-5 text-muted-foreground"><p>Вход и регистрация в приложении отключены. Данные доступны на странице без проверки пользователя.</p><p>Перед публикацией ограничьте доступ к деплою средствами Vercel: публичный адрес сам по себе не защищает данные.</p></CardContent></Card></div></div>
 }
 
 function PlaceholderView({ section, onNavigate }: Pick<WorkspaceViewsProps, 'section' | 'onNavigate'>) {
@@ -648,20 +877,20 @@ function PlaceholderView({ section, onNavigate }: Pick<WorkspaceViewsProps, 'sec
   return <div className="space-y-5"><SectionHeading title={title} description={description} /><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardContent className="flex min-h-72 flex-col items-center justify-center text-center"><span className="flex size-12 items-center justify-center rounded-xl bg-white/[0.04] text-muted-foreground"><LoaderCircle /></span><h2 className="mt-4 text-base font-medium">Раздел подготовлен</h2><p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">Этот экран подключается к реальным данным по мере готовности backend-модулей.</p><Button className="mt-5" variant="outline" onClick={() => onNavigate('settings')}>Проверить интеграции <ArrowRight data-icon="inline-end" /></Button></CardContent></Card></div>
 }
 
-export function WorkspaceView({ section, onNavigate, data, agentTasks, integrations }: WorkspaceViewsProps) {
+export function WorkspaceView({ section, onNavigate, data, agentTasks, agentUsage, integrations }: WorkspaceViewsProps) {
   switch (section) {
     case 'review': return <LiveReviewView data={data} />
     case 'catalog': return <LiveCatalogView data={data} />
     case 'orders': return <LiveOrdersView data={data} />
     case 'suppliers': return <LiveSuppliersView data={data} />
     case 'analytics': return <LiveAnalyticsView data={data} onNavigate={onNavigate} />
-    case 'agent': return <AgentView initialTasks={agentTasks} />
+    case 'agent': return <AgentView initialTasks={agentTasks} products={data.products} templates={data.publicationTemplates} onNavigate={onNavigate} />
     case 'search': return <SearchView data={data} onNavigate={onNavigate} />
     case 'pricing': return <PricingView data={data} />
-    case 'telegram': return <PublicationView channel="Telegram" />
+    case 'telegram': return <PublicationView data={data} />
     case 'editor': return <LiveEditorView data={data} />
-    case 'ai-usage': return <AiUsageView tasks={agentTasks} />
-    case 'settings': return <SettingsView integrations={integrations} />
+    case 'ai-usage': return <AiUsageView tasks={agentTasks} usage={agentUsage} />
+    case 'settings': return <SettingsView integrations={integrations} onNavigate={onNavigate} />
     default: return <PlaceholderView section={section} onNavigate={onNavigate} />
   }
 }

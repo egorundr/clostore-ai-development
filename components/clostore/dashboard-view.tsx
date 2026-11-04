@@ -17,7 +17,7 @@ type DashboardViewProps = {
 
 const chartConfig = {
   revenue: { label: 'Выручка', color: 'var(--chart-1)' },
-  profit: { label: 'Прибыль', color: 'var(--chart-2)' },
+  profit: { label: 'Чистая прибыль', color: 'var(--chart-2)' }
 }
 
 function shortRub(value: number) {
@@ -31,14 +31,28 @@ export function DashboardView({ data, onNavigate, deepseekConfigured }: Dashboar
     month: 'long',
     timeZone: 'Europe/Moscow',
   }).format(new Date())
-  const profit = data.summary.revenue - data.summary.cost
-  const averageCheck = data.summary.orderCount ? data.summary.revenue / data.summary.orderCount : 0
-  const attentionOrder = data.orders.find((order) => order.status === 'Ожидает закупки')
+  const profit = data.summary.netProfit
+  const averageCheck = data.summary.paidOrderCount ? data.summary.revenue / data.summary.paidOrderCount : 0
+  const todayISO = new Date().toISOString().slice(0, 10)
+  const attentionItems = data.orders.flatMap((order) => {
+    const isOpen = !['Завершён', 'Отменён', 'Проблема / возврат'].includes(order.status)
+    if (!isOpen) return []
+    if (order.expectedArrivalAt && order.expectedArrivalAt.slice(0, 10) < todayISO) {
+      return [{ order, title: 'Просрочено поступление', detail: 'Проверьте ожидаемую дату и доставку.' }]
+    }
+    if (['В пути по Китаю', 'Международная доставка'].includes(order.deliveryStatus) && !order.tracking) {
+      return [{ order, title: 'Нет трек-номера', detail: `Этап: ${order.deliveryStatus}` }]
+    }
+    if (order.status === 'Ожидает закупки') {
+      return [{ order, title: 'Ожидает закупки', detail: 'Заказ требует подтверждения у поставщика.' }]
+    }
+    return []
+  }).slice(0, 3)
   const metrics = [
     { label: 'Выручка', value: formatRub(data.summary.revenue), icon: Wallet, note: 'По сохранённым заказам' },
-    { label: 'Прибыль', value: formatRub(profit), icon: Activity, note: 'Выручка минус себестоимость' },
+    { label: 'Чистая прибыль', value: formatRub(profit), icon: Activity, note: 'После дополнительных расходов' },
     { label: 'Заказы', value: String(data.summary.orderCount), icon: Box, note: `${data.summary.activeOrderCount} требуют контроля` },
-    { label: 'Средний чек', value: data.summary.orderCount ? formatRub(averageCheck) : '—', icon: Wallet, note: 'По всем сохранённым заказам' },
+    { label: 'Средний чек', value: data.summary.paidOrderCount ? formatRub(averageCheck) : '—', icon: Wallet, note: 'По полностью оплаченным заказам' },
   ]
 
   return (
@@ -74,8 +88,8 @@ export function DashboardView({ data, onNavigate, deepseekConfigured }: Dashboar
             <Button variant="ghost" size="sm" onClick={() => onNavigate('analytics')}>Аналитика <ArrowRight data-icon="inline-end" /></Button>
           </CardHeader>
           <CardContent>
-            {data.summary.orderCount ? <>
-              <div className="mb-4 flex flex-wrap gap-5 text-xs text-muted-foreground"><span className="inline-flex items-center gap-2"><span className="size-2 rounded-full bg-chart-1" />Выручка</span><span className="inline-flex items-center gap-2"><span className="size-2 rounded-full bg-chart-2" />Прибыль</span></div>
+            {data.summary.paidOrderCount ? <>
+              <div className="mb-4 flex flex-wrap gap-5 text-xs text-muted-foreground"><span className="inline-flex items-center gap-2"><span className="size-2 rounded-full bg-chart-1" />Выручка</span><span className="inline-flex items-center gap-2"><span className="size-2 rounded-full bg-chart-2" />Чистая прибыль</span></div>
               <ChartContainer config={chartConfig} className="h-[230px] w-full aspect-auto">
                 <AreaChart data={data.revenueTrend} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
                   <defs><linearGradient id="revenueFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--color-revenue)" stopOpacity={0.22} /><stop offset="95%" stopColor="var(--color-revenue)" stopOpacity={0} /></linearGradient><linearGradient id="profitFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--color-profit)" stopOpacity={0.14} /><stop offset="95%" stopColor="var(--color-profit)" stopOpacity={0} /></linearGradient></defs>
@@ -94,7 +108,7 @@ export function DashboardView({ data, onNavigate, deepseekConfigured }: Dashboar
         <Card className="border-white/[0.07] bg-card/80 shadow-none">
           <CardHeader className="flex-row items-center justify-between"><div><CardTitle>Нужно внимания</CardTitle><p className="mt-1 text-xs text-muted-foreground">Сигналы по вашим данным</p></div><CircleAlert className="text-amber-200" /></CardHeader>
           <CardContent className="flex flex-col gap-2">
-            {attentionOrder ? <button onClick={() => onNavigate('orders')} className="flex w-full items-start gap-3 rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 text-left transition hover:bg-white/[0.05]"><span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-amber-500/10 text-amber-200"><Clock3 /></span><span className="min-w-0 flex-1"><span className="block text-sm font-medium">Ожидает закупки</span><span className="mt-1 block text-xs text-muted-foreground">{attentionOrder.id} · {attentionOrder.product}</span></span><ArrowRight className="mt-1 text-muted-foreground" /></button> : <div className="rounded-lg border border-white/[0.06] p-3 text-sm text-muted-foreground">Нет заказов, ожидающих закупки.</div>}
+            {attentionItems.length ? attentionItems.map(({ order, title, detail }) => <button key={`${order.recordId}-${title}`} onClick={() => onNavigate('orders')} className="flex w-full items-start gap-3 rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 text-left transition hover:bg-white/[0.05]"><span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-amber-500/10 text-amber-200"><Clock3 /></span><span className="min-w-0 flex-1"><span className="block text-sm font-medium">{title}</span><span className="mt-1 block text-xs text-muted-foreground">{order.id} · {order.product} · {detail}</span></span><ArrowRight className="mt-1 text-muted-foreground" /></button>) : <div className="rounded-lg border border-white/[0.06] p-3 text-sm text-muted-foreground">Нет заказов, требующих внимания.</div>}
             <button onClick={() => onNavigate('review')} className="flex w-full items-start gap-3 rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 text-left transition hover:bg-white/[0.05]"><span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-white/[0.05] text-muted-foreground"><PackageCheck /></span><span className="min-w-0 flex-1"><span className="block text-sm font-medium">Очередь проверки</span><span className="mt-1 block text-xs text-muted-foreground">{data.summary.reviewCount} карточек ждут решения</span></span><ArrowRight className="mt-1 text-muted-foreground" /></button>
             <div className="rounded-lg border border-white/[0.06] p-3"><div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">Поставщики</span><span>{data.suppliers.length}</span></div><div className="mt-2 flex items-center justify-between text-xs"><span className="text-muted-foreground">Опубликовано</span><span>{data.summary.publishedCount}</span></div></div>
           </CardContent>

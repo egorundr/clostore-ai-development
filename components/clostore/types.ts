@@ -116,9 +116,35 @@ export type WorkspaceProduct = {
   purchaseRub: number
   salePriceRub: number
   sizes: string[]
+  images: string[]
   description: string
   status: string
   listingStatus: string
+}
+
+export type WorkspacePublication = {
+  id: string
+  productId: string | null
+  channel: string
+  title: string
+  body: string
+  imageUrls: string[]
+  status: string
+  externalMessageId: string | null
+  publishedAt: string | null
+  error: string
+  createdAt: string
+}
+
+export type PublicationTemplate = {
+  id: string
+  name: string
+  title: string
+  body: string
+  imageUrls: string[]
+  imageTemplateUrl: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 export type WorkspaceSupplier = {
@@ -142,9 +168,23 @@ export type IntegrationStatus = {
 
 export type AgentPendingApproval = {
   approvalId: string
-  toolName: 'createProductDraft' | 'updateOrderStatus' | 'recordExpense'
+  toolName: 'createProductDraft' | 'updateProductCard' | 'updateOrderStatus' | 'recordExpense' | 'requestPinduoduoBrowserSearch'
   input: Record<string, unknown>
   reason?: string
+}
+
+export type AgentBrowserCommand = {
+  id: string
+  type: 'pinduoduo_search'
+  query: string
+  state: 'queued' | 'running' | 'completed'
+  requestedAt: string
+}
+
+export type AgentUsageSummary = {
+  taskCount: number
+  inputTokens: number
+  outputTokens: number
 }
 
 export type AgentTaskPreview = {
@@ -152,7 +192,8 @@ export type AgentTaskPreview = {
   prompt: string
   response: string
   pendingApprovals: AgentPendingApproval[]
-  status: 'running' | 'awaiting_approval' | 'completed' | 'failed'
+  browserCommand: AgentBrowserCommand | null
+  status: 'running' | 'awaiting_approval' | 'awaiting_browser' | 'browser_running' | 'completed' | 'failed' | 'cancelled'
   model: string
   inputTokens: number | null
   outputTokens: number | null
@@ -177,11 +218,14 @@ export type WorkspaceData = {
   savedSearches: SavedProductSearch[]
   orders: WorkspaceOrder[]
   products: WorkspaceProduct[]
+  publications: WorkspacePublication[]
+  publicationTemplates: PublicationTemplate[]
   suppliers: WorkspaceSupplier[]
   transactions: FinancialTransaction[]
   revenueTrend: { month: string; revenue: number; grossProfit: number; expenses: number; profit: number }[]
   summary: {
     orderCount: number
+    paidOrderCount: number
     activeOrderCount: number
     unitCount: number
     revenue: number

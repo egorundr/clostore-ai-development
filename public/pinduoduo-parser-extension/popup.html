@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Clostore Pinduoduo Parser</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <header class="header">
+        <p class="eyebrow">CLOSTORE</p>
+        <h1>Парсер Pinduoduo</h1>
+        <p class="subheading">Считывает только видимые товары на открытой странице.</p>
+      </header>
+
+      <section class="section" aria-labelledby="connection-title">
+        <h2 id="connection-title">Подключение к Clostore</h2>
+        <label for="app-origin">Адрес приложения</label>
+        <input id="app-origin" type="url" placeholder="https://ваше-приложение.vercel.app" autocomplete="url" />
+        <label for="token">Временный токен импорта</label>
+        <textarea id="token" rows="3" placeholder="Создайте токен в разделе Pinduoduo в Clostore"></textarea>
+        <button id="connect" class="button button-secondary" type="button">Сохранить подключение</button>
+        <p class="hint">Токен действует 15 минут. Он разрешает импорт черновиков и получение подтверждённых команд браузера; каждое открытие и сканирование выполняется только после вашего нажатия.</p>
+      </section>
+
+      <section class="section" aria-labelledby="agent-command-title">
+        <h2 id="agent-command-title">Команды AI-агента</h2>
+        <p class="hint">Команда появляется только после подтверждения в Clostore. Расширение ничего не открывает и не сканирует без вашего нажатия.</p>
+        <button id="check-agent-command" class="button button-secondary" type="button">Проверить очередь агента</button>
+        <div id="agent-command-card" class="command-card" hidden>
+          <p class="command-label">Подтверждённый запрос поиска</p>
+          <p id="agent-command-query" class="command-query"></p>
+          <button id="open-agent-search" class="button button-primary" type="button">Открыть поиск Pinduoduo</button>
+          <button id="send-agent-results" class="button button-secondary" type="button">Передать видимые товары агенту</button>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="search-title">
+        <h2 id="search-title">Найти товары</h2>
+        <label for="search-query">Поисковый запрос</label>
+        <input id="search-query" type="search" maxlength="120" placeholder="Например, кожаная сумка" />
+        <button id="open-search" class="button button-secondary" type="button">Открыть поиск Pinduoduo</button>
+        <button id="scan-page" class="button button-primary" type="button">Считать товары с этой страницы</button>
+        <p class="hint">После открытия результатов нажмите «Считать товары». Парсер не использует пароль, cookies, скрытые API, прокси или маскировку автоматизации.</p>
+      </section>
+
+      <p id="status" class="status" role="status" aria-live="polite">Сначала подключите Clostore, затем откройте страницу поиска Pinduoduo.</p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
