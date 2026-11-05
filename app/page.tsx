@@ -1,4 +1,4 @@
-import { getAgentTasks, getAgentUsage } from '@/app/actions/agent'
+import { getAgentPinduoduoSearchEnabled, getAgentTasks, getAgentUsage } from '@/app/actions/agent'
 import { CloStoreApp } from '@/components/clostore/app-shell'
 import { getIntegrationStatuses } from '@/lib/integrations/status'
 import { getPersonalWorkspaceUserId } from '@/lib/personal-workspace'
@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function Page() {
   const userId = await getPersonalWorkspaceUserId()
-  const [data, agentTasks, agentUsage, integrations] = await Promise.all([getWorkspaceData(userId), getAgentTasks(), getAgentUsage(), getIntegrationStatuses()])
+  const [data, agentTasks, agentUsage, integrations, agentSearchEnabled] = await Promise.all([getWorkspaceData(userId), getAgentTasks(), getAgentUsage(), getIntegrationStatuses(), getAgentPinduoduoSearchEnabled()])
 
-  return <CloStoreApp initialData={data} initialAgentTasks={agentTasks} initialAgentUsage={agentUsage} integrations={integrations} />
+  return <CloStoreApp initialData={data} initialAgentTasks={agentTasks} initialAgentUsage={agentUsage} initialAgentSearchEnabled={agentSearchEnabled} integrations={integrations} />
 }

@@ -1,6 +1,7 @@
 "use client"
 
-import { useMemo, useRef, useState, useTransition } from 'react'
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
+import useSWR from 'swr'
 import { useRouter } from 'next/navigation'
 import {
   ArrowDownToLine,
@@ -8,6 +9,7 @@ import {
   Check,
   CheckCircle2,
   Clock3,
+  Copy,
   ExternalLink,
   FileSpreadsheet,
   History,
@@ -63,7 +65,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Separator } from '@/components/ui/separator'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
-import { cancelAgentTask, continueAgentTask, getAgentTasks, respondToAgentApprovals, runAgentTask } from '@/app/actions/agent'
+import { cancelAgentTask, continueAgentTask, createAgentPinduoduoSearchToken, getAgentTasks, respondToAgentApprovals, runAgentTask, setAgentPinduoduoSearchEnabled } from '@/app/actions/agent'
 import { publishTelegramPublication, saveTelegramPublication, testTelegramConnection } from '@/app/actions/integrations'
 import { saveProductSearch, updateProductPricing } from '@/app/actions/workspace'
 import { PinduoduoSearchPanel } from './pinduoduo-search-panel'
@@ -81,6 +83,7 @@ type WorkspaceViewsProps = {
   data: WorkspaceData
   agentTasks: AgentTaskPreview[]
   agentUsage: AgentUsageSummary
+  agentSearchEnabled: boolean
   integrations: IntegrationStatus[]
 }
 
@@ -173,7 +176,7 @@ function agentTaskStatusClass(status: string) {
   return 'border-white/10 bg-white/[0.03] text-muted-foreground'
 }
 
-function AgentView({ initialTasks, products, templates, onNavigate }: { initialTasks: AgentTaskPreview[]; products: WorkspaceData['products']; templates: WorkspaceData['publicationTemplates']; onNavigate: (section: SectionId) => void }) {
+function AgentView({ initialTasks, products, templates, onNavigate, initialSearchEnabled }: { initialTasks: AgentTaskPreview[]; products: WorkspaceData['products']; templates: WorkspaceData['publicationTemplates']; onNavigate: (section: SectionId) => void; initialSearchEnabled: boolean }) {
   const [task, setTask] = useState('')
   const [tasks, setTasks] = useState(initialTasks)
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(initialTasks[0]?.id ?? null)
@@ -181,9 +184,23 @@ function AgentView({ initialTasks, products, templates, onNavigate }: { initialT
   const [error, setError] = useState('')
   const [pending, startTransition] = useTransition()
   const [refreshing, setRefreshing] = useState(false)
+  const [searchEnabled, setSearchEnabled] = useState(initialSearchEnabled)
+  const [searchPermissionPending, setSearchPermissionPending] = useState(false)
+  const [searchPermissionMessage, setSearchPermissionMessage] = useState('')
+  const [searchToken, setSearchToken] = useState('')
+  const [searchTokenCopied, setSearchTokenCopied] = useState(false)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const suggestions = ['Покажи активные товары в каталоге', 'Какие заказы сейчас в пути?', 'Найди похожие товары на Pinduoduo', 'Составь отчёт по товарам Pinduoduo и подготовь карточки', 'Создай черновик товара из моего описания']
   const activeTask = selectedTaskId ? tasks.find((item) => item.id === selectedTaskId) ?? tasks[0] : undefined
+  const shouldPollAgentTasks = Boolean(activeTask && ['running', 'awaiting_browser', 'browser_running'].includes(activeTask.status))
+  const { data: refreshedTasks } = useSWR(
+    shouldPollAgentTasks ? `agent-tasks:${activeTask?.id}` : null,
+    () => getAgentTasks(),
+    { refreshInterval: 4000, revalidateOnFocus: true },
+  )
+  useEffect(() => {
+    if (refreshedTasks) setTasks(refreshedTasks)
+  }, [refreshedTasks])
   const filteredTasks = useMemo(() => {
     const query = historyQuery.trim().toLocaleLowerCase('ru-RU')
     return tasks.filter((item) => item.prompt.toLocaleLowerCase('ru-RU').includes(query)).slice(0, 12)
@@ -243,6 +260,60 @@ function AgentView({ initialTasks, products, templates, onNavigate }: { initialT
         setError('Не удалось обработать подтверждение. Проверьте историю задачи перед повтором.')
       }
     })
+  }
+
+  async function changeSearchPermission(enabled: boolean) {
+    if (searchPermissionPending) return
+    setSearchPermissionPending(true)
+    setSearchPermissionMessage('')
+    try {
+      const result = await setAgentPinduoduoSearchEnabled(enabled)
+      if (!result.ok) {
+        setSearchPermissionMessage('Не удалось сохранить разрешение. Обновите страницу и повторите попытку.')
+        return
+      }
+      setSearchEnabled(result.enabled)
+      setSearchToken(result.browserToken ?? '')
+      setSearchTokenCopied(false)
+      setSearchPermissionMessage(enabled
+        ? 'Постоянный поиск включён. Скопируйте токен в расширение, чтобы подключить его один раз.'
+        : 'Разрешение выключено. Текущий токен расширения больше не может получать команды.')
+    } catch {
+      setSearchPermissionMessage('Не удалось сохранить разрешение. Проверьте соединение и повторите попытку.')
+    } finally {
+      setSearchPermissionPending(false)
+    }
+  }
+
+  async function revealSearchToken() {
+    if (searchPermissionPending) return
+    setSearchPermissionPending(true)
+    setSearchPermissionMessage('')
+    try {
+      const result = await createAgentPinduoduoSearchToken()
+      if (!result.ok) {
+        setSearchPermissionMessage('Сначала включите постоянное разрешение поиска.')
+        return
+      }
+      setSearchToken(result.browserToken)
+      setSearchTokenCopied(false)
+      setSearchPermissionMessage('Токен создан. Вставьте его в popup расширения Clostore Pinduoduo.')
+    } catch {
+      setSearchPermissionMessage('Не удалось создать токен подключения. Повторите попытку.')
+    } finally {
+      setSearchPermissionPending(false)
+    }
+  }
+
+  async function copySearchToken() {
+    if (!searchToken) return
+    try {
+      await navigator.clipboard.writeText(searchToken)
+      setSearchTokenCopied(true)
+      setSearchPermissionMessage('Токен скопирован. Вставьте его в расширение и сохраните подключение.')
+    } catch {
+      setSearchPermissionMessage('Не удалось скопировать автоматически. Выделите токен и скопируйте его вручную.')
+    }
   }
 
   async function refreshAgentTasks() {
@@ -334,7 +405,7 @@ function AgentView({ initialTasks, products, templates, onNavigate }: { initialT
                       <Card className="ml-10 max-w-2xl border-amber-300/20 bg-amber-300/[0.04] shadow-none">
                         <CardHeader className="gap-1.5">
                           <CardTitle className="flex items-center gap-2 text-sm"><ShieldCheck className="text-amber-200" />Нужно ваше подтверждение</CardTitle>
-                          <p className="text-xs text-muted-foreground">{activeTask.pendingApprovals.some((approval) => approval.toolName === 'requestPinduoduoBrowserSearch') ? 'Подтверждение поставит запрос в очередь расширения, но не откроет поиск. Затем в расширении нажмите «Проверить очередь агента».' : 'Проверьте детали: агент не применит изменения без вашего решения.'}</p>
+                          <p className="text-xs text-muted-foreground">{activeTask.pendingApprovals.some((approval) => approval.toolName === 'requestPinduoduoBrowserSearch') ? 'Подтверждение поставит запрос в очередь расширения. Затем откройте расширение и выполните поиск вручную.' : 'Проверьте детали: агент не применит изменения без вашего решения.'}</p>
                         </CardHeader>
                         <CardContent className="flex flex-col gap-4">
                           {activeTask.pendingApprovals.map((approval) => <div key={approval.approvalId} className="rounded-lg border border-white/[0.08] bg-background/50 p-3">
@@ -353,15 +424,15 @@ function AgentView({ initialTasks, products, templates, onNavigate }: { initialT
                     {activeTask.browserCommand && (activeTask.status === 'awaiting_browser' || activeTask.status === 'browser_running') && <MessageScrollerItem messageId={`${activeTask.id}-browser-command`}>
                       <Card className="ml-10 max-w-2xl border-violet-300/20 bg-violet-300/[0.04] shadow-none">
                         <CardHeader className="gap-1.5">
-                          <CardTitle className="flex items-center gap-2 text-sm"><Search className="text-violet-200" />Нужно действие в браузере</CardTitle>
-                          <p className="text-xs text-muted-foreground">Команда уже подтверждена. Расширение не открывает страницы и не сканирует их автоматически.</p>
+                          <CardTitle className="flex items-center gap-2 text-sm"><Search className="text-violet-200" />Поиск в браузере</CardTitle>
+                          <p className="text-xs text-muted-foreground">Команда уже в очереди. Если постоянное разрешение включено, подключённое расширение выполнит её автоматически.</p>
                         </CardHeader>
                         <CardContent className="flex flex-col gap-3">
                           <div className="rounded-lg border border-white/[0.08] bg-background/50 p-3">
                             <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Поисковый запрос</p>
                             <p className="mt-1 break-words text-sm">{activeTask.browserCommand.query}</p>
                           </div>
-                          <p className="text-xs leading-5 text-muted-foreground">Подтверждение уже поставило команду в очередь. Это не запускает поиск и не выдаёт разрешение Chrome. Откройте расширение Pinduoduo → нажмите «Проверить очередь агента» → «Открыть поиск Pinduoduo» → на странице результатов снова откройте расширение и нажмите «Передать видимые товары агенту».</p>
+                          <p className="text-xs leading-5 text-muted-foreground">При включённом разрешении расширение само откроет фоновую вкладку и вернёт видимые карточки. Без него откройте расширение Pinduoduo и выполните команду вручную. CAPTCHA и страницы проверки останавливают поиск.</p>
                           <Button type="button" variant="outline" className="self-start" disabled={pending} onClick={cancelPendingTask}>Отменить задачу</Button>
                         </CardContent>
                       </Card>
@@ -461,12 +532,45 @@ function AgentView({ initialTasks, products, templates, onNavigate }: { initialT
                 <p className="font-medium text-foreground">Доступно агенту</p>
                 <div className="mt-2 flex flex-wrap gap-1.5"><Badge variant="secondary"><Package data-icon="inline-start" />Каталог</Badge><Badge variant="secondary"><Truck data-icon="inline-start" />Заказы</Badge><Badge variant="secondary"><Wallet data-icon="inline-start" />Финансы</Badge><Badge variant="secondary"><Search data-icon="inline-start" />Pinduoduo через браузер</Badge></div>
               </div>
+              <FieldSet className="gap-2 rounded-lg border border-white/[0.07] bg-background/40 p-3">
+                <FieldLegend variant="label">Постоянное разрешение</FieldLegend>
+                <Field>
+                  <label htmlFor="agent-pinduoduo-search" className="flex cursor-pointer items-start gap-2.5 text-foreground">
+                    <input
+                      id="agent-pinduoduo-search"
+                      type="checkbox"
+                      checked={searchEnabled}
+                      disabled={searchPermissionPending}
+                      onChange={(event) => changeSearchPermission(event.target.checked)}
+                      aria-describedby="agent-pinduoduo-search-description"
+                      className="mt-0.5 size-4 shrink-0 accent-primary"
+                    />
+                    <span className="text-xs font-medium leading-5">Разрешить агенту искать на Pinduoduo без повторного подтверждения</span>
+                  </label>
+                  <FieldDescription id="agent-pinduoduo-search-description" className="mt-1 pl-[26px] text-[11px] leading-5">
+                    По запросу в чате расширение откроет фоновую вкладку и вернёт видимые карточки. CAPTCHA остановит поиск. Покупки, публикации и изменения каталога по-прежнему требуют отдельного подтверждения.
+                  </FieldDescription>
+                </Field>
+                {searchEnabled && <div className="flex flex-col gap-2">
+                  {!searchToken && <Button type="button" size="sm" variant="outline" disabled={searchPermissionPending} onClick={revealSearchToken}>
+                    {searchPermissionPending ? <LoaderCircle data-icon="inline-start" className="animate-spin" /> : null}Получить токен расширения
+                  </Button>}
+                  {searchToken && <>
+                    <Textarea aria-label="Токен постоянного поиска для расширения" value={searchToken} readOnly rows={3} className="resize-none break-all font-mono text-[10px]" />
+                    <Button type="button" size="sm" variant="outline" onClick={copySearchToken}>
+                      <Copy data-icon="inline-start" />{searchTokenCopied ? 'Скопировано' : 'Скопировать токен'}
+                    </Button>
+                  </>}
+                  <p className="text-[10px] leading-4 text-muted-foreground">В popup расширения укажите адрес Clostore и вставьте токен. При первом подключении подтвердите доступ к сайту Clostore и Pinduoduo. Токен действует год и сразу отзывается при выключении разрешения. После повторного включения подключите расширение с новым токеном.</p>
+                </div>}
+                {searchPermissionMessage && <p role="status" aria-live="polite" className="text-[11px] leading-5 text-muted-foreground">{searchPermissionMessage}</p>}
+              </FieldSet>
               <Separator className="bg-white/[0.06]" />
               <div className="flex items-start gap-2.5">
                 <CheckCircle2 className="mt-0.5 shrink-0 text-emerald-200" />
                 <div><p className="font-medium text-foreground">Изменения под контролем</p><p className="mt-1">Создание и редактирование карточек, обновление статусов и расходы — только после вашего подтверждения.</p></div>
               </div>
-              <p>Контакты покупателей не передаются. Поиск на Pinduoduo выполняется только через ваше расширение и только после подтверждения.</p>
+              <p>Контакты покупателей не передаются. Постоянное разрешение распространяется только на поиск в Pinduoduo и отзывается этим переключателем.</p>
             </CardContent>
           </Card>
         </aside>
@@ -594,7 +698,7 @@ function ReviewQueueView() {
 function ReviewProductCard({ product, onResolve }: { product: DemoProduct; onResolve: (id: string, action: 'approved' | 'rejected') => void }) {
   const cost = Math.round(product.purchaseCny * 12.7 + 1350)
   const sale = Math.round(cost * 1.75)
-  return <Card className="overflow-hidden border-white/[0.07] bg-card/80 shadow-none"><div className="flex gap-4 border-b border-white/[0.06] p-4 sm:p-5"><div className="flex size-20 shrink-0 items-center justify-center rounded-lg border border-white/[0.06] bg-[#202225] text-muted-foreground"><Shirt /></div><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><div><h2 className="font-medium">{product.name}</h2><p className="mt-1 text-xs text-muted-foreground">{product.category} · источник: {product.source}</p></div><Badge variant="outline" className="shrink-0 border-white/10">{product.id}</Badge></div><p className="mt-3 text-xs text-muted-foreground">Поставщик: {product.supplier} · Размеры {product.sizes.join(', ')}</p></div></div><CardContent className="space-y-4 p-4 sm:p-5"><div className="grid grid-cols-3 gap-2"><Metric label="Закупка" value={`${product.purchaseCny} ¥`} /><Metric label="Себестоимость" value={formatRub(cost)} /><Metric label="Цена продажи" value={formatRub(sale)} /></div><div className="flex items-start gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 text-xs leading-5 text-muted-foreground"><Sparkles className="mt-0.5 shrink-0" />Оценка соответствия и цены здесь не подтверждены источником. Проверьте характеристики и поставщика вручную.</div><div className="flex flex-wrap justify-between gap-2"><Button variant="outline" size="sm" onClick={() => onResolve(product.id, 'rejected')}><X data-icon="inline-start" /> Отклонить</Button><div className="flex gap-2"><Button variant="secondary" size="sm"><ExternalLink data-icon="inline-start" /> Источник</Button><Button size="sm" onClick={() => onResolve(product.id, 'approved')}><Check data-icon="inline-start" /> Одобрить</Button></div></div></CardContent></Card>
+  return <Card className="overflow-hidden border-white/[0.07] bg-card/80 shadow-none"><div className="flex gap-4 border-b border-white/[0.06] p-4 sm:p-5"><div className="flex size-20 shrink-0 items-center justify-center rounded-lg border border-white/[0.06] bg-[#202225] text-muted-foreground"><Shirt /></div><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><div><h2 className="font-medium">{product.name}</h2><p className="mt-1 text-xs text-muted-foreground">{product.category} · источник: {product.source}</p></div><Badge variant="outline" className="shrink-0 border-white/10">{product.id}</Badge></div><p className="mt-3 text-xs text-muted-foreground">Поставщик: {product.supplier} · Размеры {product.sizes.join(', ')}</p></div></div><CardContent className="space-y-4 p-4 sm:p-5"><div className="grid grid-cols-3 gap-2"><Metric label="Закупка" value={`${product.purchaseCny} ¥`} /><Metric label="Себестоимость" value={formatRub(cost)} /><Metric label="Цена продажи" value={formatRub(sale)} /></div><div className="flex items-start gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 text-xs leading-5 text-muted-foreground"><Sparkles className="mt-0.5 shrink-0" />Оценка соответствия и цены здесь не подтверждены источником. Проверьте характеристики и поставщика вручную.</div><div className="flex flex-wrap justify-between gap-2"><Button variant="outline" size="sm" onClick={() => onResolve(product.id, 'rejected')}><X data-icon="inline-start" /> Отклонить</Button><div className="flex gap-2"><Button variant="secondary" size="sm"><ExternalLink data-icon="inline-start" /> Источни��</Button><Button size="sm" onClick={() => onResolve(product.id, 'approved')}><Check data-icon="inline-start" /> Одобрить</Button></div></div></CardContent></Card>
 }
 
 function Metric({ label, value }: { label: string; value: string }) { return <div className="rounded-md bg-white/[0.03] p-2.5"><p className="text-[10px] text-muted-foreground">{label}</p><p className="mt-1 text-sm font-medium tabular-nums">{value}</p></div> }
@@ -690,7 +794,7 @@ function ResultRow({ label, value, strong = false }: { label: string; value: str
 function publicationStatusLabel(status: string) {
   if (status === 'published') return 'Опубликована'
   if (status === 'publishing') return 'Отправляется'
-  if (status === 'failed') return 'Ошибка отправки'
+  if (status === 'failed') return 'Ошибк�� отправки'
   return 'Черновик'
 }
 
@@ -865,7 +969,7 @@ function SettingsView({ integrations, onNavigate }: { integrations: IntegrationS
     })
   }
 
-  return <div className="space-y-5"><SectionHeading title="Настройки" description="Провайдеры, каналы продаж и правила работы приложения." /><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Подключения</CardTitle><p className="text-xs text-muted-foreground">Секреты не отображаются в интерфейсе. Добавляйте переменные в Vars проекта; статусы показывают только наличие конфигурации, не успешность API-проверки.</p></CardHeader><CardContent className="divide-y divide-white/[0.06]">{integrations.map((item) => <div key={item.name} className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center"><span className={`size-2 shrink-0 rounded-full ${item.configured ? 'bg-emerald-300' : 'bg-white/20'}`} /><div className="min-w-0 flex-1"><p className="text-sm font-medium">{item.name}</p><p className="mt-1 text-xs text-muted-foreground">{item.detail}</p>{item.requiredVariables.length > 0 && <p className="mt-1 break-words font-mono text-[10px] text-muted-foreground/80">Переменные: {item.requiredVariables.join(', ')}</p>}</div><div className="flex flex-wrap items-center gap-2"><Badge variant="outline" className={item.configured ? 'w-fit border-emerald-300/20 text-emerald-100' : 'w-fit border-white/10 text-muted-foreground'}>{item.state}</Badge>{item.testProvider && <Button type="button" size="sm" variant="outline" disabled={!item.configured || pending} onClick={() => testConnection(item.testProvider!)}>{pending ? <LoaderCircle data-icon="inline-start" className="animate-spin" /> : null}Проверить</Button>}</div>{item.testProvider && testResults[item.testProvider] && <p role="status" className="mt-2 text-xs text-muted-foreground">{testResults[item.testProvider]}</p>}</div>)}</CardContent></Card><div className="grid gap-4 xl:grid-cols-2"><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Ценообразование</CardTitle></CardHeader><CardContent className="space-y-3"><ResultRow label="Основная валюта" value="RUB" /><ResultRow label="Дополнительная валюта" value="CNY" /><ResultRow label="Часовой пояс" value="Europe/Moscow" /><Button variant="outline" size="sm" onClick={() => onNavigate('pricing')}>Открыть ценообразование</Button></CardContent></Card><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Безопасность</CardTitle></CardHeader><CardContent className="space-y-3 text-xs leading-5 text-muted-foreground"><p>Вход и регистрация в приложении отключены. Данные доступны на странице без проверки пользователя.</p><p>Перед публикацией ограничьте доступ к деплою средствами Vercel: публичный адрес сам по себе не защищает данные.</p></CardContent></Card></div></div>
+  return <div className="space-y-5"><SectionHeading title="Настро��ки" description="Провайдеры, каналы продаж и правила работы приложения." /><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Подключения</CardTitle><p className="text-xs text-muted-foreground">Секреты не отображаются в интерфейсе. Добавляйте переменные в Vars проекта; статусы показывают только наличие конфигурации, не успешность API-проверки.</p></CardHeader><CardContent className="divide-y divide-white/[0.06]">{integrations.map((item) => <div key={item.name} className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center"><span className={`size-2 shrink-0 rounded-full ${item.configured ? 'bg-emerald-300' : 'bg-white/20'}`} /><div className="min-w-0 flex-1"><p className="text-sm font-medium">{item.name}</p><p className="mt-1 text-xs text-muted-foreground">{item.detail}</p>{item.requiredVariables.length > 0 && <p className="mt-1 break-words font-mono text-[10px] text-muted-foreground/80">Переменные: {item.requiredVariables.join(', ')}</p>}</div><div className="flex flex-wrap items-center gap-2"><Badge variant="outline" className={item.configured ? 'w-fit border-emerald-300/20 text-emerald-100' : 'w-fit border-white/10 text-muted-foreground'}>{item.state}</Badge>{item.testProvider && <Button type="button" size="sm" variant="outline" disabled={!item.configured || pending} onClick={() => testConnection(item.testProvider!)}>{pending ? <LoaderCircle data-icon="inline-start" className="animate-spin" /> : null}Проверить</Button>}</div>{item.testProvider && testResults[item.testProvider] && <p role="status" className="mt-2 text-xs text-muted-foreground">{testResults[item.testProvider]}</p>}</div>)}</CardContent></Card><div className="grid gap-4 xl:grid-cols-2"><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Ценообразование</CardTitle></CardHeader><CardContent className="space-y-3"><ResultRow label="Основная валюта" value="RUB" /><ResultRow label="Дополнительная валюта" value="CNY" /><ResultRow label="Часовой пояс" value="Europe/Moscow" /><Button variant="outline" size="sm" onClick={() => onNavigate('pricing')}>Открыть ценообразование</Button></CardContent></Card><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Безопасность</CardTitle></CardHeader><CardContent className="space-y-3 text-xs leading-5 text-muted-foreground"><p>Вход и регистрация в приложении отключены. Данные доступны на странице без проверки пользователя.</p><p>Перед публикацией ограничьте доступ к деплою средствами Vercel: публичный адрес сам по себе не защищает данные.</p></CardContent></Card></div></div>
 }
 
 function PlaceholderView({ section, onNavigate }: Pick<WorkspaceViewsProps, 'section' | 'onNavigate'>) {
@@ -876,14 +980,14 @@ function PlaceholderView({ section, onNavigate }: Pick<WorkspaceViewsProps, 'sec
   return <div className="space-y-5"><SectionHeading title={title} description={description} /><Card className="border-white/[0.07] bg-card/80 shadow-none"><CardContent className="flex min-h-72 flex-col items-center justify-center text-center"><span className="flex size-12 items-center justify-center rounded-xl bg-white/[0.04] text-muted-foreground"><LoaderCircle /></span><h2 className="mt-4 text-base font-medium">Раздел подготовлен</h2><p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">Этот экран подключается к реальным данным по мере готовности backend-модулей.</p><Button className="mt-5" variant="outline" onClick={() => onNavigate('settings')}>Проверить интеграции <ArrowRight data-icon="inline-end" /></Button></CardContent></Card></div>
 }
 
-export function WorkspaceView({ section, onNavigate, data, agentTasks, agentUsage, integrations }: WorkspaceViewsProps) {
+export function WorkspaceView({ section, onNavigate, data, agentTasks, agentUsage, agentSearchEnabled, integrations }: WorkspaceViewsProps) {
   switch (section) {
     case 'review': return <LiveReviewView data={data} />
     case 'catalog': return <LiveCatalogView data={data} />
     case 'orders': return <LiveOrdersView data={data} />
     case 'suppliers': return <LiveSuppliersView data={data} />
     case 'analytics': return <LiveAnalyticsView data={data} onNavigate={onNavigate} />
-    case 'agent': return <AgentView initialTasks={agentTasks} products={data.products} templates={data.publicationTemplates} onNavigate={onNavigate} />
+    case 'agent': return <AgentView initialTasks={agentTasks} products={data.products} templates={data.publicationTemplates} onNavigate={onNavigate} initialSearchEnabled={agentSearchEnabled} />
     case 'search': return <SearchView data={data} onNavigate={onNavigate} />
     case 'pricing': return <PricingView data={data} />
     case 'telegram': return <PublicationView data={data} />

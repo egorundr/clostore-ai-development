@@ -10,6 +10,7 @@ const agentCommandCard = document.querySelector('#agent-command-card')
 const agentCommandQuery = document.querySelector('#agent-command-query')
 const openAgentSearchButton = document.querySelector('#open-agent-search')
 const sendAgentResultsButton = document.querySelector('#send-agent-results')
+const autoSearchStatusElement = document.querySelector('#auto-search-status')
 let activeBrowserCommand = null
 
 function setStatus(message, tone = '') {
@@ -24,6 +25,16 @@ function normalizeAppOrigin(value) {
     throw new Error('Укажите HTTPS-адрес Clostore без логина и пароля.')
   }
   return parsed.origin
+}
+
+function isPersistentSearchToken(token) {
+  try {
+    const payload = token.split('.')[0].replaceAll('-', '+').replaceAll('_', '/')
+    const claims = JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, '=')))
+    return claims.version === 3 && claims.scopes?.length === 1 && claims.scopes[0] === 'browser:commands'
+  } catch {
+    return false
+  }
 }
 
 function isPinduoduoUrl(value) {
@@ -42,14 +53,31 @@ function showAgentCommand(command) {
 }
 
 async function loadConnection() {
-  const { appOrigin = '', token = '', browserCommand = null } = await chrome.storage.session.get(['appOrigin', 'token', 'browserCommand'])
-  appOriginInput.value = appOrigin
-  tokenInput.value = token
-  if (browserCommand?.taskId && browserCommand?.commandId && browserCommand?.query) showAgentCommand(browserCommand)
+  const [session, local] = await Promise.all([
+    chrome.storage.session.get(['appOrigin', 'token', 'browserCommand']),
+    chrome.storage.local.get(['agentConnection', 'clostoreAgentSearchStatus']),
+  ])
+  const connection = local.agentConnection || session
+  appOriginInput.value = connection.appOrigin || ''
+  tokenInput.value = connection.token || ''
+  if (local.agentConnection) {
+    checkAgentCommandButton.hidden = true
+    autoSearchStatusElement.hidden = false
+    autoSearchStatusElement.textContent = local.clostoreAgentSearchStatus?.message || 'Автопоиск подключён. Команды AI-агента будут обрабатываться автоматически.'
+    autoSearchStatusElement.dataset.tone = local.clostoreAgentSearchStatus?.tone || 'success'
+  } else if (session.browserCommand?.taskId && session.browserCommand?.commandId && session.browserCommand?.query) {
+    showAgentCommand(session.browserCommand)
+  }
+}
+
+async function getConnection() {
+  const { agentConnection } = await chrome.storage.local.get('agentConnection')
+  if (agentConnection?.appOrigin && agentConnection?.token) return agentConnection
+  return chrome.storage.session.get(['appOrigin', 'token'])
 }
 
 async function postAgentCommand(payload) {
-  const { appOrigin, token } = await chrome.storage.session.get(['appOrigin', 'token'])
+  const { appOrigin, token } = await getConnection()
   if (!appOrigin || !token) throw new Error('Сначала сохраните адрес Clostore и временный токен.')
 
   const response = await fetch(`${appOrigin}/api/pinduoduo/agent-command`, {
@@ -78,14 +106,35 @@ connectButton.addEventListener('click', async () => {
       return
     }
 
-    const permission = await chrome.permissions.request({ origins: [`${appOrigin}/*`] })
+    const persistentSearch = isPersistentSearchToken(token)
+    const origins = [`${appOrigin}/*`]
+    if (persistentSearch) origins.push('https://mobile.yangkeduo.com/*', 'https://*.pinduoduo.com/*', 'https://*.yangkeduo.com/*')
+    const permission = await chrome.permissions.request({ origins })
     if (!permission) {
-      setStatus('Разрешение для адреса Clostore не выдано.', 'error')
+      setStatus('Не выданы все разрешения, необходимые для подключения расширения.', 'error')
       return
     }
 
     await chrome.storage.session.set({ appOrigin, token })
-    setStatus('Подключение сохранено в памяти текущего сеанса браузера.', 'success')
+    if (persistentSearch) {
+      await chrome.storage.local.set({
+        agentConnection: { appOrigin, token },
+        clostoreAgentSearchStatus: { message: 'Автопоиск подключён. Расширение будет проверять очередь раз в минуту.', tone: 'success', updatedAt: Date.now() },
+      })
+      chrome.alarms.create('clostore-pinduoduo-agent-poll', { periodInMinutes: 1 })
+      chrome.runtime.sendMessage({ type: 'RUN_AGENT_SEARCH_POLL' }).catch(() => undefined)
+      checkAgentCommandButton.hidden = true
+      autoSearchStatusElement.hidden = false
+      autoSearchStatusElement.textContent = 'Автопоиск подключён. Расширение будет проверять очередь раз в минуту.'
+      autoSearchStatusElement.dataset.tone = 'success'
+      setStatus('Постоянное подключение сохранено в браузере. Поиск запускается только когда вы просите об этом в Clostore.', 'success')
+    } else {
+      await chrome.storage.local.remove('agentConnection')
+      chrome.alarms.clear('clostore-pinduoduo-agent-poll')
+      checkAgentCommandButton.hidden = false
+      autoSearchStatusElement.hidden = true
+      setStatus('Подключение для ручного импорта сохранено в памяти текущего сеанса браузера.', 'success')
+    }
   } catch {
     setStatus('Проверьте HTTPS-адрес приложения и временный токен.', 'error')
   }
@@ -169,7 +218,7 @@ scanButton.addEventListener('click', async () => {
     const importSummary = `Разобрано ${scan.products.length}; добавлено ${result.imported}, дубликаты ${result.duplicates}, пропущено ${result.rejected}.`
     const agentReport = result.agentReport?.ok
       ? `\n\nОтчёт агента:\n${result.agentReport.text}${result.agentReport.pendingApprovalCount ? `\n\nПодготовлено изменений карточек: ${result.agentReport.pendingApprovalCount}. Подтвердите их в разделе AI-агент.` : '\n\nПолный отчёт сохранён в истории AI-агента.'}`
-      : '\n\nТовары сохранены, но отчёт агента не подготовлен. Повторите запрос позже или попросите отчёт в разделе AI-агент.'
+      : '\n\nТовары сохранены, но отчёт агента не подготовлен. Повторите запрос позж�� или попросите отчёт в разделе AI-агент.'
     setStatus(`${importSummary}${agentReport}`, 'success')
   } catch {
     setStatus('Не удалось получить итоговый ответ Clostore. Товары могли сохраниться; проверьте очередь каталога и историю AI-агента перед повторным запуском.', 'error')
@@ -232,7 +281,16 @@ sendAgentResultsButton.addEventListener('click', async () => {
       return
     }
     if (scan.status === 'challenge') {
-      setStatus('Обнаружена CAPTCHA или проверка. Передача остановлена; автоматического продолжения нет.', 'error')
+      const result = await postAgentCommand({
+        action: 'complete',
+        taskId: activeBrowserCommand.taskId,
+        commandId: activeBrowserCommand.commandId,
+        status: 'challenge',
+        products: [],
+      })
+      await chrome.storage.session.remove('browserCommand')
+      showAgentCommand(null)
+      setStatus(`Поиск остановлен на CAPTCHA или странице проверки.\n\n${result.task?.response || 'Задача обновлена в Clostore.'}`, 'error')
       return
     }
 
@@ -240,6 +298,7 @@ sendAgentResultsButton.addEventListener('click', async () => {
       action: 'complete',
       taskId: activeBrowserCommand.taskId,
       commandId: activeBrowserCommand.commandId,
+      status: scan.status === 'challenge' ? 'challenge' : scan.products?.length ? 'ok' : 'empty',
       products: scan.products || [],
     })
     await chrome.storage.session.remove('browserCommand')
@@ -256,107 +315,6 @@ sendAgentResultsButton.addEventListener('click', async () => {
   }
 })
 
-function extractVisibleProducts() {
-  const hostname = window.location.hostname.toLowerCase()
-  const isPinduoduo = hostname === 'pinduoduo.com' || hostname.endsWith('.pinduoduo.com') || hostname === 'yangkeduo.com' || hostname.endsWith('.yangkeduo.com')
-  if (!isPinduoduo) return { status: 'unavailable', products: [] }
-
-  const pageText = (document.body?.innerText || '').slice(0, 12000)
-  const challengePattern = /验证码|安全验证|人机验证|滑动验证|请完成验证|访问过于频繁|操作频繁|captcha|verify you are human|security verification/i
-  if (challengePattern.test(pageText)) return { status: 'challenge', products: [] }
-
-  const isVisible = (element) => {
-    if (!element) return false
-    const style = window.getComputedStyle(element)
-    const rect = element.getBoundingClientRect()
-    return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0
-  }
-  const isProductUrl = (value) => {
-    try {
-      const url = new URL(value, window.location.href)
-      const validHost = url.hostname === 'pinduoduo.com' || url.hostname.endsWith('.pinduoduo.com') || url.hostname === 'yangkeduo.com' || url.hostname.endsWith('.yangkeduo.com')
-      return validHost && (url.searchParams.has('goods_id') || url.searchParams.has('goodsId') || /goods|item|detail/i.test(url.pathname))
-    } catch {
-      return false
-    }
-  }
-  const cleanText = (value) => value.replace(/\s+/g, ' ').trim()
-  const parsePrice = (value) => {
-    const match = value.match(/(?:¥|￥)\s*([\d,]+(?:\.\d{1,2})?)|([\d,]+(?:\.\d{1,2})?)\s*(?:元|CNY)/i)
-    return Number((match?.[1] || match?.[2] || '0').replaceAll(',', ''))
-  }
-  const collectImages = (root) => Array.from(root.querySelectorAll('img'))
-    .filter((image) => {
-      const rect = image.getBoundingClientRect()
-      return isVisible(image) && rect.width >= 48 && rect.height >= 48
-    })
-    .map((image) => image.currentSrc || image.src || '')
-    .filter((value) => value.startsWith('https://'))
-    .filter((value, index, values) => values.indexOf(value) === index)
-    .slice(0, 4)
-
-  const products = []
-  const seen = new Set()
-  const anchors = Array.from(document.querySelectorAll('a[href]')).slice(0, 3000)
-
-  for (const anchor of anchors) {
-    if (!isVisible(anchor) || !isProductUrl(anchor.href)) continue
-    const productUrl = new URL(anchor.href, window.location.href).toString()
-    if (seen.has(productUrl)) continue
-
-    let card = anchor
-    let current = anchor
-    for (let depth = 0; depth < 6 && current; depth += 1) {
-      const text = cleanText(current.innerText || '')
-      const hasImage = current.querySelector('img') !== null
-      const hasPrice = /(?:¥|￥)\s*\d|\d\s*(?:元|CNY)/i.test(text)
-      if (hasImage && hasPrice && text.length >= 8 && text.length <= 1200) {
-        card = current
-        break
-      }
-      current = current.parentElement
-    }
-
-    const cardText = (card.innerText || anchor.innerText || '').trim()
-    const lines = cardText.split(/\n+/).map(cleanText).filter(Boolean)
-    const imageUrls = collectImages(card)
-    const name = cleanText(
-      anchor.getAttribute('aria-label') ||
-      anchor.querySelector('img[alt]')?.getAttribute('alt') ||
-      lines.find((line) => line.length >= 3 && line.length <= 180 && !/(?:¥|￥)\s*\d|\d\s*(?:元|CNY)|已拼|已售|人付款/i.test(line)) ||
-      '',
-    )
-    if (name.length < 2) continue
-
-    seen.add(productUrl)
-    products.push({
-      name: name.slice(0, 180),
-      productUrl,
-      priceCny: parsePrice(cardText),
-      sellerName: '',
-      salesHint: '',
-      imageUrls,
-    })
-    if (products.length >= 12) break
-  }
-
-  if (!products.length && isProductUrl(window.location.href)) {
-    const title = cleanText(document.querySelector('h1')?.innerText || '')
-    const imageUrls = collectImages(document.body)
-    const priceCny = parsePrice(pageText)
-    if (title.length >= 2) {
-      products.push({
-        name: title.slice(0, 180),
-        productUrl: window.location.href,
-        priceCny,
-        sellerName: '',
-        salesHint: '',
-        imageUrls,
-      })
-    }
-  }
-
-  return { status: 'ok', products }
-}
+const extractVisibleProducts = globalThis.clostoreExtractVisibleProducts
 
 loadConnection().catch(() => setStatus('Не удалось загрузить настройки расширения.', 'error'))
