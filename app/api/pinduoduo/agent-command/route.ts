@@ -12,7 +12,7 @@ const requestSchema = z.discriminatedUnion('action', [
     taskId: z.string().min(1).max(64),
     commandId: z.string().min(1).max(64),
     products: z.array(z.unknown()).max(12),
-    status: z.enum(['ok', 'empty', 'challenge']).optional(),
+    status: z.enum(['ok', 'empty', 'challenge', 'photo_upload_failed']).optional(),
   }),
 ])
 

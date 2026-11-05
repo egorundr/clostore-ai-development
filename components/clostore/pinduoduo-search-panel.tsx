@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { Copy, ExternalLink, LoaderCircle, Search, Upload } from 'lucide-react'
+import { startAgentPhotoSearch } from '@/app/actions/agent'
 import { createPinduoduoExtensionToken, createPinduoduoImportReport, importPinduoduoProduct } from '@/app/actions/pinduoduo'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -37,7 +38,19 @@ function parsePrice(text: string) {
   return Number.isFinite(price) ? String(price) : ''
 }
 
-export function PinduoduoSearchPanel() {
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.addEventListener('load', () => {
+      if (typeof reader.result === 'string') resolve(reader.result)
+      else reject(new Error('photo_read_failed'))
+    }, { once: true })
+    reader.addEventListener('error', () => reject(new Error('photo_read_failed')), { once: true })
+    reader.readAsDataURL(file)
+  })
+}
+
+export function PinduoduoSearchPanel({ onSearchStarted }: { onSearchStarted?: () => void }) {
   const router = useRouter()
   const [query, setQuery] = useState('')
   const [shareText, setShareText] = useState('')
@@ -150,6 +163,34 @@ export function PinduoduoSearchPanel() {
     setReferencePhotoUrl(URL.createObjectURL(file))
   }
 
+  function startPhotoSearch() {
+    if (!referencePhoto) return
+    const photo = referencePhoto
+    setNotice('')
+    setError('')
+    startTransition(async () => {
+      try {
+        const result = await startAgentPhotoSearch(await readFileAsDataUrl(photo))
+        if (!result.ok) {
+          const messages: Record<string, string> = {
+            invalid_input: 'Не удалось проверить фото. Выберите JPEG или PNG до 500 КБ.',
+            permission_disabled: 'Сначала включите постоянное разрешение Pinduoduo в разделе AI-агент и подключите расширение.',
+            api_key_missing: 'AI-агент не настроен для обработки результатов поиска.',
+            rate_limited: 'Достигнут лимит задач AI-агента. Попробуйте позже.',
+          }
+          setError(messages[result.reason] ?? 'Не удалось поставить фото-поиск в очередь.')
+          return
+        }
+
+        setNotice('Фото-поиск поставлен в очередь. Подключённое расширение выполнит поиск в фоне; задача открыта в AI-агенте.')
+        router.refresh()
+        onSearchStarted?.()
+      } catch {
+        setError('Не удалось передать фото в очередь поиска. Попробуйте ещё раз.')
+      }
+    })
+  }
+
   function importProduct(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setNotice('')
@@ -196,7 +237,7 @@ export function PinduoduoSearchPanel() {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <CardTitle id="pinduoduo-search-title">Поиск и парсинг Pinduoduo</CardTitle>
-              <p className="mt-1 text-xs text-muted-foreground">Расширение считывает видимые карточки и может выполнить подтверждённый AI-агентом поиск. Страницы открываются и сканируются только после вашего нажатия.</p>
+              <p className="mt-1 text-xs text-muted-foreground">Расширение читает только отображённые карточки. Фото-поиск открывается в фоне после вашего запроса в CloStore.</p>
             </div>
             <Badge variant="outline" className="border-emerald-300/20 text-emerald-100">Браузерный парсер</Badge>
           </div>
@@ -249,15 +290,15 @@ export function PinduoduoSearchPanel() {
               <li>2. В расширении укажите адрес Clostore и временный токен из этого окна.</li>
               <li>3. Откройте поиск Pinduoduo выше, нажмите значок расширения и выберите «Считать товары с этой страницы».</li>
               <li>4. После импорта агент автоматически составит отчёт и подготовит предложения для карточек. Подтвердите изменения в разделе AI-агент.</li>
-              <li>5. Для поиска по запросу агента откройте его подтверждённую команду в popup расширения. Результаты отправляются агенту только после отдельного нажатия.</li>
+              <li>5. Поиск агента при включённом постоянном разрешении выполняется расширением автоматически; результаты передаются агенту.</li>
             </ol>
           </div>
 
           <div className="grid gap-4 border-t border-white/[0.06] pt-4 lg:grid-cols-[minmax(0,1fr)_minmax(250px,0.8fr)]">
             <div className="flex flex-col gap-3">
               <div>
-                <h3 className="text-sm font-medium">Поиск по фото</h3>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">Фото остаётся на вашем устройстве. Загрузите его в официальном приложении Pinduoduo через значок камеры.</p>
+                <h3 className="text-sm font-medium">Автоматический поиск по фото</h3>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">Фото временно передаётся в очередь CloStore и расширению Chrome, но не отправляется AI-модели. После завершения поиска или отмены задачи файл удаляется из очереди.</p>
               </div>
               <Field>
                 <FieldLabel htmlFor="pdd-reference-photo">Фото для поиска (JPEG/PNG, до 500 КБ)</FieldLabel>
@@ -268,21 +309,22 @@ export function PinduoduoSearchPanel() {
                   {referencePhotoUrl && <img src={referencePhotoUrl} alt="Выбранное фото для поиска" className="size-14 rounded object-cover" />}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-medium">{referencePhoto.name}</p>
-                    <p className="text-[11px] text-muted-foreground">{Math.ceil(referencePhoto.size / 1024)} КБ · локально</p>
+                    <p className="text-[11px] text-muted-foreground">{Math.ceil(referencePhoto.size / 1024)} КБ</p>
                   </div>
                   {referencePhotoUrl && <a href={referencePhotoUrl} download={referencePhoto.name} className={buttonVariants({ variant: 'outline', size: 'sm' })}>Скачать</a>}
                 </div>
               )}
-              <a href={PINDUODUO_HOME} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
-                <ExternalLink data-icon="inline-start" />Открыть Pinduoduo
-              </a>
+              <Button type="button" onClick={startPhotoSearch} disabled={!referencePhoto || pending}>
+                {pending ? <LoaderCircle data-icon="inline-start" className="animate-spin" /> : <Search data-icon="inline-start" />}
+                {pending ? 'Отправляю фото…' : 'Искать автоматически'}
+              </Button>
+              {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+              {notice && <p role="status" className="text-xs leading-5 text-muted-foreground">{notice}</p>}
             </div>
-            <ol className="flex flex-col gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 text-xs leading-5 text-muted-foreground">
-              <li>1. Откройте официальный Pinduoduo и используйте камеру в строке поиска.</li>
-              <li>2. Выберите это же фото из галереи и найдите подходящий товар.</li>
-              <li>3. Скопируйте ссылку или текст «Поделиться» и вставьте его ниже.</li>
-              <li>4. Заполните данные товара и добавьте его в очередь проверки.</li>
-            </ol>
+            <div className="flex flex-col gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 text-xs leading-5 text-muted-foreground">
+              <p>Дальше расширение само откроет фоновую вкладку, загрузит фото и передаст найденные карточки AI-агенту — ничего нажимать на Pinduoduo не нужно.</p>
+              <p>Для первого запуска подключите расширение, включите постоянное разрешение в разделе AI-агент и войдите в Pinduoduo в Chrome. CAPTCHA и страницы входа не обходятся; в этих случаях поиск остановится.</p>
+            </div>
           </div>
         </CardContent>
       </Card>

@@ -429,10 +429,12 @@ function AgentView({ initialTasks, products, templates, onNavigate, initialSearc
                         </CardHeader>
                         <CardContent className="flex flex-col gap-3">
                           <div className="rounded-lg border border-white/[0.08] bg-background/50 p-3">
-                            <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Поисковый запрос</p>
-                            <p className="mt-1 break-words text-sm">{activeTask.browserCommand.query}</p>
+                            <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{activeTask.browserCommand.mode === 'photo' ? 'Тип поиска' : 'Поисковый запрос'}</p>
+                            <p className="mt-1 break-words text-sm">{activeTask.browserCommand.mode === 'photo' ? 'Визуальный поиск по фото' : activeTask.browserCommand.query}</p>
                           </div>
-                          <p className="text-xs leading-5 text-muted-foreground">При включённом разрешении расширение само откроет фоновую вкладку и вернёт видимые карточки. Без него откройте расширение Pinduoduo и выполните команду вручную. CAPTCHA и страницы проверки останавливают поиск.</p>
+                          <p className="text-xs leading-5 text-muted-foreground">{activeTask.browserCommand.mode === 'photo'
+                            ? 'Расширение автоматически загрузит фото в фоновую вкладку Pinduoduo и передаст видимые карточки агенту. При включённом разрешении от вас не требуется действий на сайте.'
+                            : 'При включённом разрешении расширение само откроет фоновую вкладку и вернёт видимые карточки. CAPTCHA и страницы проверки останавливают поиск.'}</p>
                           <Button type="button" variant="outline" className="self-start" disabled={pending} onClick={cancelPendingTask}>Отменить задачу</Button>
                         </CardContent>
                       </Card>
@@ -629,9 +631,9 @@ function SearchView({ data, onNavigate }: { data: WorkspaceData; onNavigate: (se
 
   return (
     <div className="space-y-5">
-      <SectionHeading title="Поиск товаров" description="Задайте запрос, откройте результаты Pinduoduo и добавьте видимые товары в очередь Clostore браузерным парсе��ом." action={<Button variant="outline" onClick={() => onNavigate('settings')}><Settings2 data-icon="inline-start" /> Источники</Button>} />
-      <div className="rounded-lg border border-sky-400/15 bg-sky-400/[0.04] p-3 text-xs leading-5 text-sky-100/75">Расширение использует вашу обычную открытую страницу Pinduoduo и читает только отображённые карточки. Пароль и cookies не передаются; при CAPTCHA или блокировке сканирование останавливается.</div>
-      <PinduoduoSearchPanel />
+      <SectionHeading title="Поиск товаров" description="Задайте запрос или приложите фото; расширение может автоматически искать и возвращать видимые карточки Pinduoduo." action={<Button variant="outline" onClick={() => onNavigate('settings')}><Settings2 data-icon="inline-start" /> Источники</Button>} />
+      <div className="rounded-lg border border-sky-400/15 bg-sky-400/[0.04] p-3 text-xs leading-5 text-sky-100/75">Расширение использует существующую сессию Chrome и работает в фоновой вкладке. Пароль и cookies не читаются; при CAPTCHA или блокировке поиск останавливается.</div>
+      <PinduoduoSearchPanel onSearchStarted={() => onNavigate('agent')} />
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <Card className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>Параметры поиска</CardTitle><p className="text-xs text-muted-foreground">Точные условия помогут сократить лишние результаты</p></CardHeader>
           <CardContent><form onSubmit={requestSearch} className="space-y-5">
@@ -943,7 +945,7 @@ function PublicationView({ data }: { data: WorkspaceData }) {
 }
 
 function EditorView() {
-  return <div className="space-y-5"><SectionHeading title="Редактор карточек" description="Подготовьте отдельные версии описания для каналов продаж." /><DemoNotice /><div className="grid gap-4 xl:grid-cols-2">{(['Telegram'] as const).map((channel) => <Card key={channel} className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>{channel}</CardTitle><p className="text-xs text-muted-foreground">Черновик карточки · не опубликован</p></CardHeader><CardContent className="space-y-3"><Input placeholder="Заголовок товара" /><Textarea className="min-h-36" placeholder="Описание, размеры, материал, у��ловия заказа" /><div className="flex justify-between"><Button variant="outline" size="sm"><ImagePlus data-icon="inline-start" /> Фотографии</Button><Button size="sm" variant="secondary">Сохранить черновик</Button></div></CardContent></Card>)}</div></div>
+  return <div className="space-y-5"><SectionHeading title="Редактор карточек" description="Подг��товьте отдельные версии описания для каналов продаж." /><DemoNotice /><div className="grid gap-4 xl:grid-cols-2">{(['Telegram'] as const).map((channel) => <Card key={channel} className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>{channel}</CardTitle><p className="text-xs text-muted-foreground">Черновик карточки · не опубликован</p></CardHeader><CardContent className="space-y-3"><Input placeholder="Заголовок товара" /><Textarea className="min-h-36" placeholder="Описание, размеры, материал, у��ловия заказа" /><div className="flex justify-between"><Button variant="outline" size="sm"><ImagePlus data-icon="inline-start" /> Фотографии</Button><Button size="sm" variant="secondary">Сохранить черновик</Button></div></CardContent></Card>)}</div></div>
 }
 
 function AnalyticsView() {

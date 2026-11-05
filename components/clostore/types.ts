@@ -177,6 +177,7 @@ export type AgentBrowserCommand = {
   id: string
   type: 'pinduoduo_search'
   query: string
+  mode?: 'text' | 'photo'
   state: 'queued' | 'running' | 'completed'
   requestedAt: string
   persistentPermission?: boolean
