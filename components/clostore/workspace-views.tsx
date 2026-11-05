@@ -63,7 +63,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Separator } from '@/components/ui/separator'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
-import { cancelAgentTask, getAgentTasks, respondToAgentApprovals, runAgentTask } from '@/app/actions/agent'
+import { cancelAgentTask, continueAgentTask, getAgentTasks, respondToAgentApprovals, runAgentTask } from '@/app/actions/agent'
 import { publishTelegramPublication, saveTelegramPublication, testTelegramConnection } from '@/app/actions/integrations'
 import { saveProductSearch, updateProductPricing } from '@/app/actions/workspace'
 import { PinduoduoSearchPanel } from './pinduoduo-search-panel'
@@ -210,9 +210,11 @@ function AgentView({ initialTasks, products, templates, onNavigate }: { initialT
     setError('')
     startTransition(async () => {
       try {
-        const result = await runAgentTask(prompt)
+        const result = activeTask?.status === 'completed'
+          ? await continueAgentTask(activeTask.id, prompt)
+          : await runAgentTask(prompt)
         if (!result.ok) {
-          setError(result.reason === 'invalid_input' ? 'Введите задачу длиной до 4 000 символов.' : result.reason === 'rate_limited' ? 'Лимит достигнут: не более 10 запросов за час.' : result.reason === 'api_key_missing' ? 'Добавьте DEEPSEEK_API_KEY в переменные окружения проекта, чтобы включить агента.' : 'DeepSeek API временно недоступен. История попытки сохранена; попробуйте позже.')
+          setError(result.reason === 'invalid_input' ? 'Введите задачу длиной до 4 000 символов.' : result.reason === 'rate_limited' ? 'Лимит достигнут: не более 10 запросов за час.' : result.reason === 'api_key_missing' ? 'Добавьте DEEPSEEK_API_KEY в переменные окружения проекта, чтобы включить агента.' : result.reason === 'not_continuable' ? 'Эту задачу ещё нельзя продолжить. Дождитесь завершения или начните новую.' : result.reason === 'stale_task' ? 'Исходная задача не найдена. Обновите историю задач.' : 'DeepSeek API временно недоступен. История попытки сохранена; попробуйте позже.')
           return
         }
         setTasks((current) => [result.task, ...current.filter((item) => item.id !== result.task.id)].slice(0, 20))
@@ -310,32 +312,29 @@ function AgentView({ initialTasks, products, templates, onNavigate }: { initialT
               <MessageScroller className="min-h-[100px] flex-1 md:min-h-[280px]">
                 <MessageScrollerViewport aria-label="История диалога с AI-агентом" className="px-5 py-6 sm:px-7">
                   <MessageScrollerContent className="min-h-full justify-start">
-                    <MessageScrollerItem messageId={`${activeTask.id}-request`} className="flex justify-end">
-                      <Message align="end" className="max-w-[88%]">
+                    {activeTask.conversation.map((turn, index) => <MessageScrollerItem key={`${activeTask.id}-turn-${index}`} messageId={`${activeTask.id}-turn-${index}`} className={turn.role === 'user' ? 'flex justify-end' : ''} scrollAnchor={index === activeTask.conversation.length - 1}>
+                      {turn.role === 'user' ? <Message align="end" className="max-w-[88%]">
                         <MessageContent className="items-end">
                           <MessageHeader className="px-1">Вы</MessageHeader>
-                          <Bubble variant="muted" align="end"><BubbleContent className="whitespace-pre-wrap border-white/[0.06] px-4 py-3 text-sm leading-6">{activeTask.prompt}</BubbleContent></Bubble>
+                          <Bubble variant="muted" align="end"><BubbleContent className="whitespace-pre-wrap border-white/[0.06] px-4 py-3 text-sm leading-6">{turn.text}</BubbleContent></Bubble>
                         </MessageContent>
-                      </Message>
-                    </MessageScrollerItem>
-                    <MessageScrollerItem messageId={`${activeTask.id}-response`} scrollAnchor>
-                      <Message>
+                      </Message> : <Message>
                         <MessageAvatar className="size-8 rounded-xl border border-emerald-300/10 bg-emerald-300/[0.06] text-emerald-100"><Sparkles className="size-4" /></MessageAvatar>
                         <MessageContent>
                           <MessageHeader className="gap-2 px-0"><span className="text-foreground">CloStore AI</span><span aria-hidden="true" className="text-muted-foreground/60">·</span><span>{activeTask.model}</span></MessageHeader>
-                          <Bubble variant="ghost"><BubbleContent className="whitespace-pre-wrap px-0 py-0 text-sm leading-7 text-foreground">{activeTask.response || (activeTask.status === 'running' ? 'Задача выполняется…' : 'Запрос завершился с ошибкой. Отправьте его повторно.')}</BubbleContent></Bubble>
-                          <MessageFooter className="gap-2 px-0 text-[10px]">
+                          <Bubble variant="ghost"><BubbleContent className="whitespace-pre-wrap px-0 py-0 text-sm leading-7 text-foreground">{turn.text}</BubbleContent></Bubble>
+                          {index === activeTask.conversation.length - 1 && <MessageFooter className="gap-2 px-0 text-[10px]">
                             <time dateTime={new Date(activeTask.createdAt).toISOString()}>{dateTime.format(new Date(activeTask.createdAt))}</time>
                             {activeTask.inputTokens != null && activeTask.outputTokens != null && <><span aria-hidden="true">·</span><span>{activeTask.inputTokens + activeTask.outputTokens} токенов</span></>}
-                          </MessageFooter>
+                          </MessageFooter>}
                         </MessageContent>
-                      </Message>
-                    </MessageScrollerItem>
+                      </Message>}
+                    </MessageScrollerItem>)}
                     {activeTask.pendingApprovals.length > 0 && <MessageScrollerItem messageId={`${activeTask.id}-approval`}>
                       <Card className="ml-10 max-w-2xl border-amber-300/20 bg-amber-300/[0.04] shadow-none">
                         <CardHeader className="gap-1.5">
                           <CardTitle className="flex items-center gap-2 text-sm"><ShieldCheck className="text-amber-200" />Нужно ваше подтверждение</CardTitle>
-                          <p className="text-xs text-muted-foreground">Проверьте детали: агент не применит изменения без вашего решения.</p>
+                          <p className="text-xs text-muted-foreground">{activeTask.pendingApprovals.some((approval) => approval.toolName === 'requestPinduoduoBrowserSearch') ? 'Подтверждение поставит запрос в очередь расширения, но не откроет поиск. Затем в расширении нажмите «Проверить очередь агента».' : 'Проверьте детали: агент не применит изменения без вашего решения.'}</p>
                         </CardHeader>
                         <CardContent className="flex flex-col gap-4">
                           {activeTask.pendingApprovals.map((approval) => <div key={approval.approvalId} className="rounded-lg border border-white/[0.08] bg-background/50 p-3">
@@ -362,7 +361,7 @@ function AgentView({ initialTasks, products, templates, onNavigate }: { initialT
                             <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Поисковый запрос</p>
                             <p className="mt-1 break-words text-sm">{activeTask.browserCommand.query}</p>
                           </div>
-                          <p className="text-xs leading-5 text-muted-foreground">Откройте расширение Pinduoduo, нажмите «Проверить очередь агента», вручную откройте поиск, затем вернитесь на страницу результатов и нажмите «Передать видимые товары агенту».</p>
+                          <p className="text-xs leading-5 text-muted-foreground">Подтверждение уже поставило команду в очередь. Это не запускает поиск и не выдаёт разрешение Chrome. Откройте расширение Pinduoduo → нажмите «Проверить очередь агента» → «Открыть поиск Pinduoduo» → на странице результатов снова откройте расширение и нажмите «Передать видимые товары агенту».</p>
                           <Button type="button" variant="outline" className="self-start" disabled={pending} onClick={cancelPendingTask}>Отменить задачу</Button>
                         </CardContent>
                       </Card>
@@ -396,12 +395,12 @@ function AgentView({ initialTasks, products, templates, onNavigate }: { initialT
                     event.preventDefault()
                     event.currentTarget.form?.requestSubmit()
                   }
-                }} placeholder="Например: покажи заказы в пути и выдели те, где нужна проверка" className="min-h-20 resize-y border-0 bg-transparent px-1 py-2 shadow-none focus-visible:ring-0" />
+                }} placeholder={activeTask?.status === 'completed' ? 'Уточните задачу — контекст диалога сохранится' : 'Например: покажи заказы в пути и выдели те, где нужна проверка'} className="min-h-20 resize-y border-0 bg-transparent px-1 py-2 shadow-none focus-visible:ring-0" />
               </Field>
               <div className="mt-2 flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2 text-[10px] text-muted-foreground">
                   <span className="shrink-0">До 4 000 символов</span>
-                  <span id="agent-composer-hint" className="sr-only sm:not-sr-only sm:truncate">Изменения — только после подтверждения</span>
+                  <span id="agent-composer-hint" className="sr-only sm:not-sr-only sm:truncate">{activeTask?.status === 'completed' ? 'Сообщение продолжит этот диалог; «Новая задача» сбросит контекст.' : 'Изменения — только после подтверждения'}</span>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <kbd className="hidden rounded-md border border-white/[0.08] bg-white/[0.025] px-2 py-1 text-[10px] text-muted-foreground sm:inline-flex">Ctrl / ⌘ Enter</kbd>
@@ -840,7 +839,7 @@ function PublicationView({ data }: { data: WorkspaceData }) {
 }
 
 function EditorView() {
-  return <div className="space-y-5"><SectionHeading title="Редактор карточек" description="Подготовьте отдельные версии описания для каналов продаж." /><DemoNotice /><div className="grid gap-4 xl:grid-cols-2">{(['Telegram'] as const).map((channel) => <Card key={channel} className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>{channel}</CardTitle><p className="text-xs text-muted-foreground">Черновик карточки · не опубликован</p></CardHeader><CardContent className="space-y-3"><Input placeholder="Заголовок товара" /><Textarea className="min-h-36" placeholder="Описание, размеры, материал, условия заказа" /><div className="flex justify-between"><Button variant="outline" size="sm"><ImagePlus data-icon="inline-start" /> Фотографии</Button><Button size="sm" variant="secondary">Сохранить черновик</Button></div></CardContent></Card>)}</div></div>
+  return <div className="space-y-5"><SectionHeading title="Редактор карточек" description="Подготовьте отдельные версии описания для каналов продаж." /><DemoNotice /><div className="grid gap-4 xl:grid-cols-2">{(['Telegram'] as const).map((channel) => <Card key={channel} className="border-white/[0.07] bg-card/80 shadow-none"><CardHeader><CardTitle>{channel}</CardTitle><p className="text-xs text-muted-foreground">Черновик карточки · не опубликован</p></CardHeader><CardContent className="space-y-3"><Input placeholder="Заголовок товара" /><Textarea className="min-h-36" placeholder="Описание, размеры, материал, у��ловия заказа" /><div className="flex justify-between"><Button variant="outline" size="sm"><ImagePlus data-icon="inline-start" /> Фотографии</Button><Button size="sm" variant="secondary">Сохранить черновик</Button></div></CardContent></Card>)}</div></div>
 }
 
 function AnalyticsView() {

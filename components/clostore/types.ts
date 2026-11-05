@@ -187,10 +187,16 @@ export type AgentUsageSummary = {
   outputTokens: number
 }
 
+export type AgentConversationTurn = {
+  role: 'user' | 'assistant'
+  text: string
+}
+
 export type AgentTaskPreview = {
   id: string
   prompt: string
   response: string
+  conversation: AgentConversationTurn[]
   pendingApprovals: AgentPendingApproval[]
   browserCommand: AgentBrowserCommand | null
   status: 'running' | 'awaiting_approval' | 'awaiting_browser' | 'browser_running' | 'completed' | 'failed' | 'cancelled'
