@@ -134,7 +134,7 @@ function Sidebar({ active, onNavigate, mobile = false, onClose, reviewCount, dee
   )
 }
 
-export function CloStoreApp({ initialData, initialAgentTasks, initialAgentUsage, integrations }: { initialData: WorkspaceData; initialAgentTasks: AgentTaskPreview[]; initialAgentUsage: AgentUsageSummary; integrations: IntegrationStatus[] }) {
+export function CloStoreApp({ initialData, initialAgentTasks, initialAgentUsage, initialAgentSearchEnabled, integrations }: { initialData: WorkspaceData; initialAgentTasks: AgentTaskPreview[]; initialAgentUsage: AgentUsageSummary; initialAgentSearchEnabled: boolean; integrations: IntegrationStatus[] }) {
   const deepseekConfigured = integrations.find((integration) => integration.name === 'DeepSeek API')?.configured ?? false
   const [active, setActive] = useState<SectionId>('dashboard')
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -164,14 +164,14 @@ export function CloStoreApp({ initialData, initialAgentTasks, initialAgentUsage,
             <Button className="hidden sm:inline-flex" variant="outline" size="sm" onClick={() => setQuickActionsOpen(true)}><Command data-icon="inline-start" /> Быстрое действие</Button>
           </header>
           <main className="mx-auto w-full max-w-[1560px] px-4 py-6 sm:px-6 sm:py-7 lg:px-8">
-            {active === 'dashboard' ? <DashboardView data={initialData} onNavigate={navigate} deepseekConfigured={deepseekConfigured} /> : <WorkspaceView section={active} onNavigate={navigate} data={initialData} agentTasks={initialAgentTasks} agentUsage={initialAgentUsage} integrations={integrations} />}
+            {active === 'dashboard' ? <DashboardView data={initialData} onNavigate={navigate} deepseekConfigured={deepseekConfigured} /> : <WorkspaceView section={active} onNavigate={navigate} data={initialData} agentTasks={initialAgentTasks} agentUsage={initialAgentUsage} agentSearchEnabled={initialAgentSearchEnabled} integrations={integrations} />}
           </main>
           <footer className="px-4 pb-5 text-center text-[10px] text-muted-foreground/60 sm:px-6">CloStore AI · рабочее пространство · ранняя версия</footer>
         </div>
       </div>
       <Dialog open={quickActionsOpen} onOpenChange={setQuickActionsOpen}>
         <DialogContent className="border-white/10 bg-[#1b1d20]">
-          <DialogHeader><DialogTitle>Быстрое действие</DialogTitle><DialogDescription>Перейдите к основному сценарию. Никакие внешние операции не запускаются автоматически.</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>Быстрое действие</DialogTitle><DialogDescription>Перейдите к основному сценарию. Никакие внешние операции не запускаются ав��оматически.</DialogDescription></DialogHeader>
           <div className="grid gap-2">
             {[
               { label: 'Запустить поиск товаров', section: 'search' as const, icon: Search },

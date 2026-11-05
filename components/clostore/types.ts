@@ -179,6 +179,7 @@ export type AgentBrowserCommand = {
   query: string
   state: 'queued' | 'running' | 'completed'
   requestedAt: string
+  persistentPermission?: boolean
 }
 
 export type AgentUsageSummary = {

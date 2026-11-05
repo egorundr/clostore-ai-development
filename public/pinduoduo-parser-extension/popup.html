@@ -18,16 +18,17 @@
         <h2 id="connection-title">Подключение к Clostore</h2>
         <label for="app-origin">Адрес приложения</label>
         <input id="app-origin" type="url" placeholder="https://ваше-приложение.vercel.app" autocomplete="url" />
-        <label for="token">Временный токен импорта</label>
-        <textarea id="token" rows="3" placeholder="Создайте токен в разделе Pinduoduo в Clostore"></textarea>
+        <label for="token">Токен Clostore</label>
+        <textarea id="token" rows="3" placeholder="Токен импорта на 15 минут или постоянный токен AI-агента"></textarea>
         <button id="connect" class="button button-secondary" type="button">Сохранить подключение</button>
-        <p class="hint">Если Chrome спросит разрешение для адреса Clostore, это разрешение только на связь расширения с приложением — поиск оно не запускает. Токен действует 15 минут; открытие поиска и считывание товаров выполняются отдельно, только после ваших нажатий.</p>
+        <p class="hint">Короткий токен подходит для ручного импорта. Постоянный токен AI-агента даёт только доступ к очереди поиска; при подключении Chrome отдельно спросит доступ к Pinduoduo. Разрешение поиска можно отозвать в Clostore.</p>
       </section>
 
       <section class="section" aria-labelledby="agent-command-title">
         <h2 id="agent-command-title">Команды AI-агента</h2>
         <p class="hint">Команда появляется только после подтверждения в Clostore. Расширение ничего не открывает и не сканирует без вашего нажатия.</p>
         <button id="check-agent-command" class="button button-secondary" type="button">Проверить очередь агента</button>
+        <p id="auto-search-status" class="hint" role="status" aria-live="polite" hidden></p>
         <div id="agent-command-card" class="command-card" hidden>
           <p class="command-label">Подтверждённый запрос поиска</p>
           <p id="agent-command-query" class="command-query"></p>
@@ -47,6 +48,7 @@
 
       <p id="status" class="status" role="status" aria-live="polite">Сначала подключите Clostore, затем откройте страницу поиска Pinduoduo.</p>
     </main>
+    <script src="product-parser.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

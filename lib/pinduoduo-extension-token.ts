@@ -21,6 +21,15 @@ const claimsSchema = z.union([
     expiresAt: z.number().int().positive(),
     nonce: z.string().uuid(),
   }),
+  z.object({
+    version: z.literal(3),
+    audience: z.literal('clostore-pinduoduo-import'),
+    scopes: z.array(z.literal('browser:commands')).length(1),
+    userId: z.string().min(1).max(120),
+    permissionVersion: z.number().int().nonnegative(),
+    expiresAt: z.number().int().positive(),
+    nonce: z.string().uuid(),
+  }),
 ])
 
 type TokenClaims = z.infer<typeof claimsSchema>
@@ -51,8 +60,26 @@ export function issuePinduoduoExtensionToken(userId: string) {
   return { token: `${payload}.${signature}`, expiresAt: claims.expiresAt * 1000 }
 }
 
+export function issuePinduoduoAgentSearchToken(userId: string, permissionVersion: number) {
+  const claims: TokenClaims = {
+    version: 3,
+    audience: 'clostore-pinduoduo-import',
+    scopes: ['browser:commands'],
+    userId,
+    permissionVersion,
+    expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60,
+    nonce: randomUUID(),
+  }
+  const payload = Buffer.from(JSON.stringify(claims)).toString('base64url')
+  const signature = sign(payload).toString('base64url')
+
+  return { token: `${payload}.${signature}`, expiresAt: claims.expiresAt * 1000 }
+}
+
 export function hasPinduoduoExtensionScope(claims: TokenClaims, scope: PinduoduoExtensionScope) {
-  return claims.version === 1 ? scope === 'products:import' : claims.scopes.includes(scope)
+  if (claims.version === 1) return scope === 'products:import'
+  if (claims.version === 3) return scope === 'browser:commands'
+  return claims.scopes.includes(scope)
 }
 
 export function verifyPinduoduoExtensionToken(token: string) {

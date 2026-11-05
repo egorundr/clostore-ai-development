@@ -106,6 +106,12 @@ export const agentTasks = pgTable('agent_tasks', {
   updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 }, (table) => [index('agent_tasks_user_created_idx').on(table.userId, table.createdAt)])
 
+export const agentSettings = pgTable('agent_settings', {
+  userId: text('userId').primaryKey(),
+  pinduoduoSearchEnabled: boolean('pinduoduoSearchEnabled').notNull().default(false),
+  updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
+})
+
 export const orders = pgTable('orders', {
   id: text('id').primaryKey(),
   userId: text('userId').notNull().references(() => user.id, { onDelete: 'cascade' }),
