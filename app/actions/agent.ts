@@ -10,7 +10,7 @@ import { db } from '@/lib/db'
 import { agentTasks, financialTransactions, orderStatusHistory, orders, products, suppliers } from '@/lib/db/schema'
 import { getPersonalWorkspaceUserId } from '@/lib/personal-workspace'
 import { hasPinduoduoExtensionScope, verifyPinduoduoExtensionToken } from '@/lib/pinduoduo-extension-token'
-import type { AgentBrowserCommand, AgentPendingApproval, AgentTaskPreview } from '@/components/clostore/types'
+import type { AgentBrowserCommand, AgentConversationTurn, AgentPendingApproval, AgentTaskPreview } from '@/components/clostore/types'
 
 const MODEL_ID = process.env.DEEPSEEK_MODEL?.trim() || 'deepseek-flash'
 const MAX_PROMPT_LENGTH = 4000
@@ -37,6 +37,7 @@ const storedResponseSchema = z.object({
   format: z.literal('clostore-agent-v1'),
   text: z.string(),
   messages: z.array(z.unknown()),
+  turns: z.array(z.object({ role: z.enum(['user', 'assistant']), text: z.string().max(10_000) })).optional(),
   pendingApprovals: z.array(approvalSchema),
   stage: z.enum(['awaiting_approval', 'awaiting_browser', 'browser_running', 'running', 'cancelled']).optional(),
   browserCommand: browserCommandSchema.nullable().optional(),
@@ -46,6 +47,7 @@ type StoredAgentResponse = {
   format: 'clostore-agent-v1'
   text: string
   messages: ModelMessage[]
+  turns?: AgentConversationTurn[]
   pendingApprovals: AgentPendingApproval[]
   stage?: 'awaiting_approval' | 'awaiting_browser' | 'browser_running' | 'running' | 'cancelled'
   browserCommand?: AgentBrowserCommand | null
@@ -62,6 +64,7 @@ function parseResponse(value: string): StoredAgentResponse {
       return {
         ...result.data,
         messages: result.data.messages as ModelMessage[],
+        turns: result.data.turns ?? [],
         pendingApprovals: result.data.pendingApprovals as AgentPendingApproval[],
       }
     }
@@ -69,7 +72,7 @@ function parseResponse(value: string): StoredAgentResponse {
     // Older task rows store the response as plain text.
   }
 
-  return { format: 'clostore-agent-v1', text: value, messages: [], pendingApprovals: [] }
+  return { format: 'clostore-agent-v1', text: value, messages: [], turns: [], pendingApprovals: [] }
 }
 
 function responseForResult(
@@ -126,13 +129,18 @@ function responseForResult(
     ? 'Подготовил действие. Проверьте детали и подтвердите его ниже, чтобы продолжить.'
     : 'Задача выполнена.')
   const text = browserCommand?.state === 'queued'
-    ? `${baseText}${suffix}\n\nКоманда поиска подготовлена. Запустите её в расширении браузера, затем передайте агенту видимые результаты.`
+    ? `${baseText}${suffix}\n\nКоманда поиска подготовлена. После подтверждения проверьте очередь в расширении, откройте поиск и отдельно передайте видимые результаты.`
     : `${baseText}${suffix}`
+  const turns = [
+    ...(previousResponse?.turns ?? []),
+    ...(baseText ? [{ role: 'assistant' as const, text: baseText }] : []),
+  ]
 
   return {
     format: 'clostore-agent-v1',
     text,
     messages: [...messages, ...result.responseMessages],
+    turns,
     pendingApprovals,
     ...(browserCommand ? { browserCommand } : {}),
     ...(browserCommand?.state === 'queued'
@@ -468,6 +476,9 @@ function toTaskPreview(row: {
     id: row.id,
     prompt: row.prompt,
     response: response.text,
+    conversation: response.turns?.length
+      ? response.turns
+      : [{ role: 'user' as const, text: row.prompt }, ...(response.text ? [{ role: 'assistant' as const, text: response.text }] : [])],
     pendingApprovals: response.pendingApprovals,
     browserCommand: response.browserCommand ?? null,
     status: (response.stage ?? (row.status === 'running' && response.pendingApprovals.length ? 'awaiting_approval' : row.status)) as AgentTaskPreview['status'],
@@ -567,6 +578,7 @@ export async function runAgentTask(rawPrompt: string) {
     format: 'clostore-agent-v1',
     text: '',
     messages: [{ role: 'user', content: prompt }],
+    turns: [{ role: 'user', text: prompt }],
     pendingApprovals: [],
   }
   const canStartTask = await db.transaction(async (transaction) => {
@@ -590,7 +602,7 @@ export async function runAgentTask(rawPrompt: string) {
   try {
     const messages = initialResponse.messages
     const result = await createAgent(userId).generate({ messages, abortSignal: AbortSignal.timeout(45_000) })
-    const response = responseForResult(result, messages)
+    const response = responseForResult(result, messages, initialResponse)
     const status = response.stage ? 'running' : 'completed'
     const inputTokens = result.usage.inputTokens ?? null
     const outputTokens = result.usage.outputTokens ?? null
@@ -622,6 +634,121 @@ export async function runAgentTask(rawPrompt: string) {
       .where(and(eq(agentTasks.id, taskId), eq(agentTasks.userId, userId)))
       .catch(() => undefined)
     return { ok: false as const, reason: 'provider_unavailable' as const }
+  }
+}
+
+export async function continueAgentTask(taskId: string, rawPrompt: string) {
+  if (typeof taskId !== 'string' || taskId.length > 64 || typeof rawPrompt !== 'string') {
+    return { ok: false as const, reason: 'invalid_input' as const }
+  }
+  const prompt = rawPrompt.trim()
+  if (!prompt || prompt.length > MAX_PROMPT_LENGTH) {
+    return { ok: false as const, reason: 'invalid_input' as const }
+  }
+  if (!process.env.DEEPSEEK_API_KEY?.trim()) return { ok: false as const, reason: 'api_key_missing' as const }
+
+  const userId = await getPersonalWorkspaceUserId()
+  const newTaskId = randomUUID()
+  const createdAt = new Date()
+
+  const startResult = await db.transaction(async (transaction) => {
+    await transaction.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${userId})::bigint)`)
+    const [source] = await transaction.select({
+      id: agentTasks.id,
+      prompt: agentTasks.prompt,
+      response: agentTasks.response,
+      status: agentTasks.status,
+    }).from(agentTasks)
+      .where(and(eq(agentTasks.id, taskId), eq(agentTasks.userId, userId)))
+      .limit(1)
+    if (!source) return { state: 'stale_task' as const }
+    if (source.status !== 'completed') return { state: 'not_continuable' as const }
+
+    const sourceState = parseResponse(source.response)
+    if (sourceState.stage || sourceState.pendingApprovals.length) return { state: 'not_continuable' as const }
+
+    const [recentTasks] = await transaction.select({ total: count() }).from(agentTasks)
+      .where(and(eq(agentTasks.userId, userId), gte(agentTasks.createdAt, new Date(Date.now() - 60 * 60 * 1000))))
+    if (recentTasks.total >= MAX_TASKS_PER_HOUR) return { state: 'rate_limited' as const }
+
+    const previousTurns = sourceState.turns?.length
+      ? sourceState.turns
+      : [{ role: 'user' as const, text: source.prompt }, ...(sourceState.text ? [{ role: 'assistant' as const, text: sourceState.text }] : [])]
+    const previousMessages = sourceState.messages.length
+      ? sourceState.messages
+      : previousTurns.map(({ role, text }) => ({ role, content: text } as ModelMessage))
+    const initialResponse: StoredAgentResponse = {
+      ...sourceState,
+      text: '',
+      messages: [...previousMessages, { role: 'user', content: prompt }],
+      turns: [...previousTurns, { role: 'user', text: prompt }],
+      pendingApprovals: [],
+      stage: undefined,
+    }
+
+    await transaction.insert(agentTasks).values({
+      id: newTaskId,
+      userId,
+      prompt,
+      response: serializeResponse(initialResponse),
+      status: 'running',
+      model: MODEL_ID,
+      createdAt,
+    })
+    return { state: 'started' as const, initialResponse }
+  })
+
+  if (startResult.state !== 'started') {
+    return { ok: false as const, reason: startResult.state }
+  }
+  const initialResponse = startResult.initialResponse
+
+  try {
+    const result = await createAgent(userId).generate({ messages: initialResponse.messages, abortSignal: AbortSignal.timeout(45_000) })
+    const response = responseForResult(result, initialResponse.messages, initialResponse)
+    const status = response.stage ? 'running' : 'completed'
+    const inputTokens = result.usage.inputTokens ?? null
+    const outputTokens = result.usage.outputTokens ?? null
+    const serializedResponse = serializeResponse(response)
+    await db.update(agentTasks).set({
+      response: serializedResponse,
+      status,
+      inputTokens,
+      outputTokens,
+      updatedAt: new Date(),
+    }).where(and(eq(agentTasks.id, newTaskId), eq(agentTasks.userId, userId)))
+    revalidatePath('/')
+
+    return { ok: true as const, task: toTaskPreview({
+      id: newTaskId,
+      prompt,
+      response: serializedResponse,
+      status,
+      model: MODEL_ID,
+      inputTokens,
+      outputTokens,
+      createdAt,
+    }) }
+  } catch {
+    const failedResponse: StoredAgentResponse = {
+      ...initialResponse,
+      text: 'Не удалось продолжить диалог: AI-сервис временно недоступен. Контекст сохранён в истории; попробуйте позже.',
+      turns: [...(initialResponse.turns ?? []), { role: 'assistant', text: 'Не удалось продолжить диалог: AI-сервис временно недоступен. Контекст сохранён в истории; попробуйте позже.' }],
+    }
+    const serializedResponse = serializeResponse(failedResponse)
+    await db.update(agentTasks).set({ response: serializedResponse, status: 'failed', updatedAt: new Date() })
+      .where(and(eq(agentTasks.id, newTaskId), eq(agentTasks.userId, userId)))
+    revalidatePath('/')
+    return { ok: true as const, task: toTaskPreview({
+      id: newTaskId,
+      prompt,
+      response: serializedResponse,
+      status: 'failed',
+      model: MODEL_ID,
+      inputTokens: null,
+      outputTokens: null,
+      createdAt,
+    }) }
   }
 }
 
